@@ -67,7 +67,7 @@ export const addTeacher = async (teacher) => {
 // 3. Contact Messages Operations
 export const getContactMessages = async () => {
   const { data, error } = await supabase
-    .from('contact_messages')
+    .from('messages')
     .select('*')
     .order('created_at', { ascending: false });
   if (error) throw error;
