@@ -118,6 +118,25 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     teacher_name: ''
   });
 
+  // 7. Homepage Update Modals and Form States
+  const [showAchievementModal, setShowAchievementModal] = useState(false);
+  const [showMemorialModal, setShowMemorialModal] = useState(false);
+
+  const [achievementForm, setAchievementForm] = useState({
+    student_name: '',
+    student_class: 'দাখিল ১০ম শ্রেণি',
+    headline: '',
+    description: '',
+    image_url: ''
+  });
+
+  const [memorialForm, setMemorialForm] = useState({
+    member_name: '',
+    lifespan: '',
+    contribution_headline: '',
+    contribution_details: ''
+  });
+
   const triggerToast = (msg, type = 'success') => {
     setToastMsg(msg);
     setToastType(type);
@@ -477,6 +496,119 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     }
   };
 
+  // Handle Homepage Achievements Submission
+  const handleAchievementSubmit = async (e) => {
+    e.preventDefault();
+    if (!achievementForm.student_name.trim() || !achievementForm.headline.trim() || !achievementForm.description.trim()) {
+      triggerToast('সকল প্রয়োজনীয় ঘর পূরণ করুন।', 'error');
+      return;
+    }
+
+    const newAchievement = {
+      id: Date.now(),
+      name: achievementForm.student_name.trim(),
+      class: achievementForm.student_class,
+      achievement: achievementForm.headline.trim(),
+      fullDetails: achievementForm.description.trim(),
+      avatarColor: "bg-emerald-800 text-amber-300",
+      initials: achievementForm.student_name.trim().substring(0, 2),
+      student_name: achievementForm.student_name.trim(),
+      student_class: achievementForm.student_class,
+      headline: achievementForm.headline.trim(),
+      description: achievementForm.description.trim(),
+      image_url: achievementForm.image_url.trim() || null,
+      created_at: new Date().toISOString()
+    };
+
+    // Save locally
+    const local = JSON.parse(localStorage.getItem('achievements') || '[]');
+    localStorage.setItem('achievements', JSON.stringify([...local, newAchievement]));
+
+    triggerToast('শিক্ষার্থীর সাফল্য সফলভাবে যুক্ত করা হয়েছে!');
+    setAchievementForm({
+      student_name: '',
+      student_class: 'দাখিল ১০ম শ্রেণি',
+      headline: '',
+      description: '',
+      image_url: ''
+    });
+    setShowAchievementModal(false);
+
+    // Try Supabase insert
+    try {
+      await supabase.from('achievements').insert([
+        {
+          name: newAchievement.name,
+          class: newAchievement.class,
+          achievement: newAchievement.achievement,
+          fullDetails: newAchievement.fullDetails,
+          avatarColor: newAchievement.avatarColor,
+          initials: newAchievement.initials,
+          student_name: newAchievement.student_name,
+          student_class: newAchievement.student_class,
+          headline: newAchievement.headline,
+          description: newAchievement.description,
+          image_url: newAchievement.image_url
+        }
+      ]);
+    } catch (err) {
+      console.log("Supabase insert ignored for achievements:", err.message);
+    }
+  };
+
+  // Handle Homepage Memorial Submission
+  const handleMemorialSubmit = async (e) => {
+    e.preventDefault();
+    if (!memorialForm.member_name.trim() || !memorialForm.lifespan.trim() || !memorialForm.contribution_headline.trim() || !memorialForm.contribution_details.trim()) {
+      triggerToast('সকল প্রয়োজনীয় ঘর পূরণ করুন।', 'error');
+      return;
+    }
+
+    const newMemorial = {
+      id: Date.now(),
+      name: memorialForm.member_name.trim(),
+      lifetime: memorialForm.lifespan.trim(),
+      contribution: memorialForm.contribution_headline.trim(),
+      bio: memorialForm.contribution_details.trim(),
+      member_name: memorialForm.member_name.trim(),
+      lifespan: memorialForm.lifespan.trim(),
+      contribution_headline: memorialForm.contribution_headline.trim(),
+      contribution_details: memorialForm.contribution_details.trim(),
+      created_at: new Date().toISOString()
+    };
+
+    // Save locally
+    const local = JSON.parse(localStorage.getItem('memoriam_members') || '[]');
+    localStorage.setItem('memoriam_members', JSON.stringify([...local, newMemorial]));
+
+    triggerToast('কমিটির স্মরণীয় ব্যক্তি সফলভাবে যুক্ত করা হয়েছে!');
+    setMemorialForm({
+      member_name: '',
+      lifespan: '',
+      contribution_headline: '',
+      contribution_details: ''
+    });
+    setShowMemorialModal(false);
+
+    // Try Supabase insert
+    try {
+      await supabase.from('memorial_committee').insert([
+        {
+          name: newMemorial.name,
+          lifetime: newMemorial.lifetime,
+          contribution: newMemorial.contribution,
+          bio: newMemorial.bio,
+          member_name: newMemorial.member_name,
+          lifespan: newMemorial.lifespan,
+          contribution_headline: newMemorial.contribution_headline,
+          contribution_details: newMemorial.contribution_details
+        }
+      ]);
+    } catch (err) {
+      console.log("Supabase insert ignored for memorial_committee:", err.message);
+    }
+  };
+
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour >= 5 && hour < 12) return "শুভ সকাল";
@@ -576,6 +708,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
               { id: 'routine', label: 'রুটিন', icon: Calendar },
               { id: 'messages', label: 'মেসেজ ইনবক্স', icon: Mail },
               { id: 'settings', label: 'এডমিন সেটিংস', icon: Settings },
+              { id: 'homepage_update', label: 'হোমপেজ আপডেট', icon: BookOpen },
             ].map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -661,6 +794,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
               { id: 'routine', label: 'রুটিন', icon: Calendar },
               { id: 'messages', label: 'মেসেজ ইনবক্স', icon: Mail },
               { id: 'settings', label: 'এডমিন সেটিংস', icon: Settings },
+              { id: 'homepage_update', label: 'হোমপেজ আপডেট', icon: BookOpen },
             ].map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -1975,6 +2109,255 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                       ! সতর্কতা: অ্যাকাউন্ট ক্রিয়েট করার পূর্বে ব্যবহারকারীর পদবী ও সেশন রোল পুনরায় চেক করুন।
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Tab 9: Homepage Update */}
+              {activeTab === 'homepage_update' && (
+                <div className="space-y-8 animate-fade-in">
+                  
+                  {/* Banner Card */}
+                  <div className="bg-gradient-to-r from-[#032416] via-[#09472e] to-[#032416] border border-emerald-500/20 rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-3xl"></div>
+                    <div className="space-y-2 z-10 relative">
+                      <span className="bg-amber-500/10 text-amber-300 text-[10px] font-black uppercase tracking-wider py-1 px-3.5 rounded-full border border-amber-500/25">
+                        Dynamic Website Customizer
+                      </span>
+                      <h2 className="text-xl md:text-2xl font-black text-white leading-tight">
+                        মাদ্রাসা মূল ওয়েবসাইট আপডেট কন্ট্রোল
+                      </h2>
+                      <p className="text-xs text-emerald-200 leading-relaxed font-semibold max-w-2xl">
+                        এখান থেকে আপনি মূল ওয়েবসাইটের কৃতী শিক্ষার্থীর সাফল্য এবং পরিচালনা কমিটির স্মরণীয় ব্যক্তিদের তথ্য যুক্ত করতে পারবেন। যেকোনো তথ্য সফলভাবে যোগ হওয়ামাত্রই তা লাইভ ওয়েবসাইটে রিয়েল-টাইমে আপডেট হয়ে যাবে।
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Cards Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Card 1: Student Achievement */}
+                    <div 
+                      onClick={() => setShowAchievementModal(true)}
+                      className={`border rounded-3xl p-6 relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-amber-500/30 group shadow-[0_4px_30px_rgba(0,0,0,0.15)] cursor-pointer ${
+                        isDarkMode ? 'bg-[#031d12] border-emerald-900/40 text-emerald-100' : 'bg-white border-gray-200 text-slate-800'
+                      }`}
+                    >
+                      <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-amber-500 to-amber-600"></div>
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-2">
+                          <h3 className="text-lg font-bold text-amber-400 group-hover:text-amber-300 transition-colors">
+                            ১. শিক্ষার্থীর সাফল্য যোগ করুন
+                          </h3>
+                          <p className={`text-xs leading-relaxed font-semibold ${isDarkMode ? 'text-gray-400' : 'text-gray-650'}`}>
+                            বোর্ড পরীক্ষায় জিপিএ-৫ প্রাপ্তি, ক্যালিগ্রাফি বা সাংস্কৃতিক প্রতিযোগিতায় অসামান্য সাফল্য অর্জনকারী শিক্ষার্থীদের তথ্য যুক্ত করুন।
+                          </p>
+                        </div>
+                        <div className="p-3.5 bg-amber-500/10 text-amber-400 rounded-2xl shrink-0">
+                          <Award className="h-6 w-6" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card 2: Memorial Members */}
+                    <div 
+                      onClick={() => setShowMemorialModal(true)}
+                      className={`border rounded-3xl p-6 relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-emerald-500/30 group shadow-[0_4px_30px_rgba(0,0,0,0.15)] cursor-pointer ${
+                        isDarkMode ? 'bg-[#031d12] border-emerald-900/40 text-emerald-100' : 'bg-white border-gray-200 text-slate-800'
+                      }`}
+                    >
+                      <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-emerald-500 to-emerald-600"></div>
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-2">
+                          <h3 className="text-lg font-bold text-emerald-400 group-hover:text-emerald-300 transition-colors">
+                            ২. কমিটির স্মরণীয় ব্যক্তি যোগ করুন
+                          </h3>
+                          <p className={`text-xs leading-relaxed font-semibold ${isDarkMode ? 'text-gray-400' : 'text-gray-650'}`}>
+                            মাদ্রাসার প্রতিষ্ঠাতা, ভূমি দাতা বা আজীবন সেবাকারী স্মরণীয় ব্যক্তিত্বদের জীবনকাল ও অবদানের কথা লিখে শ্রদ্ধাঞ্জলি জানান।
+                          </p>
+                        </div>
+                        <div className="p-3.5 bg-emerald-500/10 text-emerald-400 rounded-2xl shrink-0">
+                          <BookOpen className="h-6 w-6" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Popup Modal 1: Student Achievement */}
+                  {showAchievementModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+                      <div className={`w-full max-w-lg rounded-3xl border-t-4 border-amber-500 p-6 md:p-8 shadow-2xl relative ${
+                        isDarkMode ? 'bg-[#031a10] border-emerald-900/50 text-white' : 'bg-white border-gray-200 text-slate-900'
+                      }`}>
+                        <button 
+                          onClick={() => setShowAchievementModal(false)}
+                          className="absolute top-4 right-4 p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer animate-pulse"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                        <h3 className="text-lg font-black text-amber-400 mb-6 flex items-center gap-2">
+                          <Award className="h-5 w-5" />
+                          <span>শিক্ষার্থীর সাফল্য অর্জন ফরম</span>
+                        </h3>
+                        <form onSubmit={handleAchievementSubmit} className="space-y-4 text-left">
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-450 mb-1">শিক্ষার্থীর নাম *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={achievementForm.student_name}
+                              onChange={(e) => setAchievementForm({...achievementForm, student_name: e.target.value})}
+                              placeholder="মোহাম্মদ তানভীর রহমান"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">শ্রেণী নির্বাচন করুন *</label>
+                            <select 
+                              value={achievementForm.student_class}
+                              onChange={(e) => setAchievementForm({...achievementForm, student_class: e.target.value})}
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            >
+                              {[
+                                "দাখিল ১০ম শ্রেণি", "দাখিল ৯ম শ্রেণি", "দাখিল ৮ম শ্রেণি", "দাখিল ৭ম শ্রেণি", "দাখিল ৬ষ্ঠ শ্রেণি",
+                                "৫ম শ্রেণি", "৪র্থ শ্রেণি", "৩য় শ্রেণি", "২য় শ্রেণি", "১ম শ্রেণি", "শিশু শ্রেণি"
+                              ].map(cls => (
+                                <option key={cls} value={cls}>{cls}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-450 mb-1">সাফল্য হেডলাইন *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={achievementForm.headline}
+                              onChange={(e) => setAchievementForm({...achievementForm, headline: e.target.value})}
+                              placeholder="দাখিল বোর্ড পরীক্ষায় গোল্ডেন জিপিএ ৫.০০ এবং উপজেলায় প্রথম স্থান।"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-450 mb-1">সাফল্য বিবরণী *</label>
+                            <textarea 
+                              required
+                              rows="3"
+                              value={achievementForm.description}
+                              onChange={(e) => setAchievementForm({...achievementForm, description: e.target.value})}
+                              placeholder="শিক্ষার্থীর মেধার বিবরণ, ভবিষ্যত পরিকল্পনা এবং অবদানের কথা বিস্তারিত লিখুন।"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            ></textarea>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-450 mb-1">ছবির লিংক (Image URL)</label>
+                            <input 
+                              type="text"
+                              value={achievementForm.image_url}
+                              onChange={(e) => setAchievementForm({...achievementForm, image_url: e.target.value})}
+                              placeholder="https://example.com/photo.jpg"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <button 
+                            type="submit"
+                            className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-md mt-6 flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <Plus className="h-4.5 w-4.5" />
+                            <span>সাফল্য ডেটাবেসে যুক্ত করুন</span>
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Popup Modal 2: Memorial Figure */}
+                  {showMemorialModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+                      <div className={`w-full max-w-lg rounded-3xl border-t-4 border-emerald-500 p-6 md:p-8 shadow-2xl relative ${
+                        isDarkMode ? 'bg-[#031a10] border-emerald-900/50 text-white' : 'bg-white border-gray-200 text-slate-900'
+                      }`}>
+                        <button 
+                          onClick={() => setShowMemorialModal(false)}
+                          className="absolute top-4 right-4 p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer animate-pulse"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                        <h3 className="text-lg font-black text-emerald-400 mb-6 flex items-center gap-2">
+                          <BookOpen className="h-5 w-5" />
+                          <span>কমিটির স্মরণীয় ব্যক্তিত্ব ফর্ম</span>
+                        </h3>
+                        <form onSubmit={handleMemorialSubmit} className="space-y-4 text-left">
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">স্মরণীয় ব্যক্তির নাম *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={memorialForm.member_name}
+                              onChange={(e) => setMemorialForm({...memorialForm, member_name: e.target.value})}
+                              placeholder="মরহুম আলহাজ্ব নূর উদ্দিন আহমেদ"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">জন্ম-মৃত্যু সাল (জীবনকাল) *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={memorialForm.lifespan}
+                              onChange={(e) => setMemorialForm({...memorialForm, lifespan: e.target.value})}
+                              placeholder="উদা: ১৯৩০ - ২০০৮"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900 font-sans'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান হেডলাইন *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={memorialForm.contribution_headline}
+                              onChange={(e) => setMemorialForm({...memorialForm, contribution_headline: e.target.value})}
+                              placeholder="মাদ্রাসার ভূমি দাতা ও প্রতিষ্ঠাতা সভাপতি।"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান বিস্তারিত *</label>
+                            <textarea 
+                              required
+                              rows="4"
+                              value={memorialForm.contribution_details}
+                              onChange={(e) => setMemorialForm({...memorialForm, contribution_details: e.target.value})}
+                              placeholder="মাদ্রাসার প্রতিষ্ঠা ও এর উন্নয়নে এই ব্যক্তির অবদান ও শ্রদ্ধাঞ্জলি স্মৃতিসমূহ বিস্তারিত লিখুন।"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            ></textarea>
+                          </div>
+                          <button 
+                            type="submit"
+                            className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-md mt-6 flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <Plus className="h-4.5 w-4.5" />
+                            <span>স্মরণীয় ব্যক্তিত্ব যুক্ত করুন</span>
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
 
                 </div>
               )}
