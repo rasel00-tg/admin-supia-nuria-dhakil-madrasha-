@@ -34,6 +34,8 @@ import {
   getContactMessages,
   createNewUser
 } from '../supabaseClient';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db } from '../firebaseClient';
 
 export default function AdminDashboard({ adminUser, onLogout }) {
   const [activeTab, setActiveTab] = useState('home');
@@ -234,26 +236,36 @@ export default function AdminDashboard({ adminUser, onLogout }) {
 
     // Load Achievements
     try {
-      const { data, error } = await supabase.from('achievements').select('*').order('id', { ascending: true });
-      if (!error && data) {
+      const q = query(collection(db, "achievements"), orderBy("created_at", "asc"));
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAchievementsList(data);
+    } catch (e) {
+      console.error("Error loading achievements from firestore:", e);
+      try {
+        const querySnapshot = await getDocs(collection(db, "achievements"));
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAchievementsList(data);
-      } else {
+      } catch (innerErr) {
         setAchievementsList(JSON.parse(localStorage.getItem('achievements') || '[]'));
       }
-    } catch (e) {
-      setAchievementsList(JSON.parse(localStorage.getItem('achievements') || '[]'));
     }
 
     // Load Memorial Committee
     try {
-      const { data, error } = await supabase.from('memorial_committee').select('*').order('id', { ascending: true });
-      if (!error && data) {
+      const q = query(collection(db, "memorial_committee"), orderBy("created_at", "asc"));
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setMemoriamList(data);
+    } catch (e) {
+      console.error("Error loading memorial_committee from firestore:", e);
+      try {
+        const querySnapshot = await getDocs(collection(db, "memorial_committee"));
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setMemoriamList(data);
-      } else {
+      } catch (innerErr) {
         setMemoriamList(JSON.parse(localStorage.getItem('memoriam_members') || '[]'));
       }
-    } catch (e) {
-      setMemoriamList(JSON.parse(localStorage.getItem('memoriam_members') || '[]'));
     }
 
     setStats({
@@ -268,28 +280,40 @@ export default function AdminDashboard({ adminUser, onLogout }) {
   useEffect(() => {
     loadDatabaseData();
 
-    // Setup Realtime subscriptions
-    const achievementsChannel = supabase
-      .channel('admin_achievements_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'achievements' }, () => {
-        supabase.from('achievements').select('*').order('id', { ascending: true }).then(({ data, error }) => {
-          if (!error && data) setAchievementsList(data);
+    // Setup Realtime subscriptions via Firestore onSnapshot
+    const unsubAchievements = onSnapshot(
+      query(collection(db, "achievements"), orderBy("created_at", "asc")),
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAchievementsList(data);
+      },
+      (error) => {
+        console.error("Firestore achievements subscription error, falling back to simple listen:", error);
+        onSnapshot(collection(db, "achievements"), (snapshot) => {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setAchievementsList(data);
         });
-      })
-      .subscribe();
+      }
+    );
 
-    const memoriamChannel = supabase
-      .channel('admin_memoriam_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'memorial_committee' }, () => {
-        supabase.from('memorial_committee').select('*').order('id', { ascending: true }).then(({ data, error }) => {
-          if (!error && data) setMemoriamList(data);
+    const unsubMemoriam = onSnapshot(
+      query(collection(db, "memorial_committee"), orderBy("created_at", "asc")),
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setMemoriamList(data);
+      },
+      (error) => {
+        console.error("Firestore memorial_committee subscription error, falling back to simple listen:", error);
+        onSnapshot(collection(db, "memorial_committee"), (snapshot) => {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setMemoriamList(data);
         });
-      })
-      .subscribe();
+      }
+    );
 
     return () => {
-      supabase.removeChannel(achievementsChannel);
-      supabase.removeChannel(memoriamChannel);
+      unsubAchievements();
+      unsubMemoriam();
     };
   }, []);
 
@@ -558,48 +582,25 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       return;
     }
 
-    const newAchievement = {
-      id: Date.now(),
-      name: achievementForm.student_name.trim(),
-      class: achievementForm.student_class,
-      achievement: achievementForm.headline.trim(),
-      fullDetails: achievementForm.description.trim(),
-      avatarColor: "bg-emerald-800 text-amber-300",
-      initials: achievementForm.student_name.trim().substring(0, 2),
-      student_name: achievementForm.student_name.trim(),
-      student_class: achievementForm.student_class,
-      headline: achievementForm.headline.trim(),
-      description: achievementForm.description.trim(),
-      image_url: achievementForm.image_url.trim() || null,
-      created_at: new Date().toISOString()
-    };
-
-    // Save locally
-    const local = JSON.parse(localStorage.getItem('achievements') || '[]');
-    localStorage.setItem('achievements', JSON.stringify([...local, newAchievement]));
-
-    triggerToast('শিক্ষার্থীর সাফল্য সফলভাবে যুক্ত করা হয়েছে!');
-    setAchievementForm({
-      student_name: '',
-      student_class: 'দাখিল ১০ম শ্রেণি',
-      headline: '',
-      description: '',
-      image_url: ''
-    });
-    setShowAchievementModal(false);
-
-    // Try Supabase insert
     try {
-      const { error } = await supabase.from('achievements').insert([
-        {
-          student_name: newAchievement.student_name,
-          student_class: newAchievement.student_class,
-          headline: newAchievement.headline,
-          description: newAchievement.description,
-          image_url: newAchievement.image_url
-        }
-      ]);
-      if (error) throw error;
+      await addDoc(collection(db, "achievements"), {
+        student_name: achievementForm.student_name.trim(),
+        student_class: achievementForm.student_class,
+        headline: achievementForm.headline.trim(),
+        description: achievementForm.description.trim(),
+        image_url: achievementForm.image_url.trim() || null,
+        created_at: new Date()
+      });
+
+      triggerToast('শিক্ষার্থীর সাফল্য সফলভাবে যুক্ত করা হয়েছে!');
+      setAchievementForm({
+        student_name: '',
+        student_class: 'দাখিল ১০ম শ্রেণি',
+        headline: '',
+        description: '',
+        image_url: ''
+      });
+      setShowAchievementModal(false);
       alert("সফলভাবে ডাটাবেসে জমা হয়েছে!");
     } catch (err) {
       alert("ডাটা জমা হয়নি! কারণ: " + err.message);
@@ -614,44 +615,26 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       return;
     }
 
-    const newMemorial = {
-      id: Date.now(),
-      name: memorialForm.member_name.trim(),
-      lifetime: memorialForm.lifespan.trim(),
-      contribution: memorialForm.contribution_headline.trim(),
-      bio: memorialForm.contribution_details.trim(),
-      member_name: memorialForm.member_name.trim(),
-      lifespan: memorialForm.lifespan.trim(),
-      contribution_headline: memorialForm.contribution_headline.trim(),
-      contribution_details: memorialForm.contribution_details.trim(),
-      created_at: new Date().toISOString()
-    };
-
-    // Save locally
-    const local = JSON.parse(localStorage.getItem('memoriam_members') || '[]');
-    localStorage.setItem('memoriam_members', JSON.stringify([...local, newMemorial]));
-
-    triggerToast('কমিটির স্মরণীয় ব্যক্তি সফলভাবে যুক্ত করা হয়েছে!');
-    setMemorialForm({
-      member_name: '',
-      lifespan: '',
-      contribution_headline: '',
-      contribution_details: ''
-    });
-    setShowMemorialModal(false);
-
-    // Try Supabase insert
     try {
-      await supabase.from('memorial_committee').insert([
-        {
-          member_name: newMemorial.member_name,
-          lifespan: newMemorial.lifespan,
-          contribution_headline: newMemorial.contribution_headline,
-          contribution_details: newMemorial.contribution_details
-        }
-      ]);
+      await addDoc(collection(db, "memorial_committee"), {
+        member_name: memorialForm.member_name.trim(),
+        lifespan: memorialForm.lifespan.trim(),
+        contribution_headline: memorialForm.contribution_headline.trim(),
+        contribution_details: memorialForm.contribution_details.trim(),
+        created_at: new Date()
+      });
+
+      triggerToast('কমিটির স্মরণীয় ব্যক্তি সফলভাবে যুক্ত করা হয়েছে!');
+      setMemorialForm({
+        member_name: '',
+        lifespan: '',
+        contribution_headline: '',
+        contribution_details: ''
+      });
+      setShowMemorialModal(false);
+      alert("সফলভাবে ডাটাবেসে জমা হয়েছে!");
     } catch (err) {
-      console.log("Supabase insert ignored for memorial_committee:", err.message);
+      alert("ডাটা জমা হয়নি! কারণ: " + err.message);
     }
   };
 
@@ -663,18 +646,15 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       return;
     }
     try {
-      const { error } = await supabase
-        .from('achievements')
-        .update({
-          student_name: editingAchievement.student_name.trim(),
-          student_class: editingAchievement.student_class,
-          headline: editingAchievement.headline.trim(),
-          description: editingAchievement.description.trim(),
-          image_url: editingAchievement.image_url ? editingAchievement.image_url.trim() : null
-        })
-        .eq('id', editingAchievement.id);
+      const docRef = doc(db, "achievements", editingAchievement.id);
+      await updateDoc(docRef, {
+        student_name: editingAchievement.student_name.trim(),
+        student_class: editingAchievement.student_class,
+        headline: editingAchievement.headline.trim(),
+        description: editingAchievement.description.trim(),
+        image_url: editingAchievement.image_url ? editingAchievement.image_url.trim() : null
+      });
 
-      if (error) throw error;
       triggerToast('শিক্ষার্থীর সাফল্য সফলভাবে আপডেট করা হয়েছে!');
       setEditingAchievement(null);
       loadDatabaseData();
@@ -691,17 +671,14 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       return;
     }
     try {
-      const { error } = await supabase
-        .from('memorial_committee')
-        .update({
-          member_name: editingMemorial.member_name.trim(),
-          lifespan: editingMemorial.lifespan.trim(),
-          contribution_headline: editingMemorial.contribution_headline.trim(),
-          contribution_details: editingMemorial.contribution_details.trim()
-        })
-        .eq('id', editingMemorial.id);
+      const docRef = doc(db, "memorial_committee", editingMemorial.id);
+      await updateDoc(docRef, {
+        member_name: editingMemorial.member_name.trim(),
+        lifespan: editingMemorial.lifespan.trim(),
+        contribution_headline: editingMemorial.contribution_headline.trim(),
+        contribution_details: editingMemorial.contribution_details.trim()
+      });
 
-      if (error) throw error;
       triggerToast('কমিটির স্মরণীয় ব্যক্তিত্ব সফলভাবে আপডেট করা হয়েছে!');
       setEditingMemorial(null);
       loadDatabaseData();
@@ -714,11 +691,8 @@ export default function AdminDashboard({ adminUser, onLogout }) {
   const handleDeleteAchievement = async (id) => {
     if (!window.confirm("আপনি কি নিশ্চিতভাবে এই শিক্ষার্থীর সাফল্য ডিলিট করতে চান?")) return;
     try {
-      const { error } = await supabase
-        .from('achievements')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
+      const docRef = doc(db, "achievements", id);
+      await deleteDoc(docRef);
       triggerToast('শিক্ষার্থীর সাফল্য সফলভাবে ডিলিট করা হয়েছে!');
       loadDatabaseData();
     } catch (err) {
@@ -730,11 +704,8 @@ export default function AdminDashboard({ adminUser, onLogout }) {
   const handleDeleteMemorial = async (id) => {
     if (!window.confirm("আপনি কি নিশ্চিতভাবে এই স্মরণীয় ব্যক্তিত্ব ডিলিট করতে চান?")) return;
     try {
-      const { error } = await supabase
-        .from('memorial_committee')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
+      const docRef = doc(db, "memorial_committee", id);
+      await deleteDoc(docRef);
       triggerToast('স্মরণীয় ব্যক্তিত্ব সফলভাবে ডিলিট করা হয়েছে!');
       loadDatabaseData();
     } catch (err) {
