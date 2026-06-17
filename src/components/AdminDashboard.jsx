@@ -536,7 +536,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
 
     // Try Supabase insert
     try {
-      await supabase.from('achievements').insert([
+      const { error } = await supabase.from('achievements').insert([
         {
           student_name: newAchievement.student_name,
           student_class: newAchievement.student_class,
@@ -545,8 +545,10 @@ export default function AdminDashboard({ adminUser, onLogout }) {
           image_url: newAchievement.image_url
         }
       ]);
+      if (error) throw error;
+      alert("সফলভাবে ডাটাবেসে জমা হয়েছে!");
     } catch (err) {
-      console.log("Supabase insert ignored for achievements:", err.message);
+      alert("ডাটা জমা হয়নি! কারণ: " + err.message);
     }
   };
 
