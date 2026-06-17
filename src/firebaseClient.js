@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -11,5 +11,8 @@ const firebaseConfig = {
   measurementId: "G-CVD7EYK638"
 };
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+// Safe logic to avoid duplicate initialization in development
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
+
+export { db };
