@@ -2567,6 +2567,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                             <input 
                               type="text"
                               required
+                              maxLength={25}
                               value={memorialForm.contribution_headline}
                               onChange={(e) => setMemorialForm({...memorialForm, contribution_headline: e.target.value})}
                               placeholder="মাদ্রাসার ভূমি দাতা ও প্রতিষ্ঠাতা সভাপতি।"
@@ -2574,6 +2575,14 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                                 isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             />
+                            <div className="flex justify-between items-center mt-1 px-1">
+                              <span className="text-[10px] text-gray-500">সর্বোচ্চ ২৫ অক্ষর</span>
+                              <span className={`text-[10px] font-bold ${
+                                memorialForm.contribution_headline.length >= 25 ? 'text-rose-500' : 'text-emerald-400'
+                              }`}>
+                                {memorialForm.contribution_headline.length}/25 অক্ষর
+                              </span>
+                            </div>
                           </div>
                           <div>
                             <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান বিস্তারিত *</label>
@@ -2753,6 +2762,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                             <input 
                               type="text"
                               required
+                              maxLength={25}
                               value={editingMemorial.contribution_headline}
                               onChange={(e) => setEditingMemorial({...editingMemorial, contribution_headline: e.target.value})}
                               placeholder="অবদান হেডলাইন লিখুন"
@@ -2760,6 +2770,14 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                                 isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             />
+                            <div className="flex justify-between items-center mt-1 px-1">
+                              <span className="text-[10px] text-gray-500">সর্বোচ্চ ২৫ অক্ষর</span>
+                              <span className={`text-[10px] font-bold ${
+                                editingMemorial.contribution_headline.length >= 25 ? 'text-rose-500' : 'text-emerald-400'
+                              }`}>
+                                {editingMemorial.contribution_headline.length}/25 অক্ষর
+                              </span>
+                            </div>
                           </div>
                           <div>
                             <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান বিস্তারিত *</label>
