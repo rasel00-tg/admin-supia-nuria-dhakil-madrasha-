@@ -538,12 +538,6 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     try {
       await supabase.from('achievements').insert([
         {
-          name: newAchievement.name,
-          class: newAchievement.class,
-          achievement: newAchievement.achievement,
-          fullDetails: newAchievement.fullDetails,
-          avatarColor: newAchievement.avatarColor,
-          initials: newAchievement.initials,
           student_name: newAchievement.student_name,
           student_class: newAchievement.student_class,
           headline: newAchievement.headline,
@@ -594,10 +588,6 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     try {
       await supabase.from('memorial_committee').insert([
         {
-          name: newMemorial.name,
-          lifetime: newMemorial.lifetime,
-          contribution: newMemorial.contribution,
-          bio: newMemorial.bio,
           member_name: newMemorial.member_name,
           lifespan: newMemorial.lifespan,
           contribution_headline: newMemorial.contribution_headline,
