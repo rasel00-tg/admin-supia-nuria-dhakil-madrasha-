@@ -2241,22 +2241,21 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                     {/* Card 1: Student Achievement */}
                     <div 
                       onClick={() => setShowAchievementModal(true)}
-                      className={`border rounded-3xl p-6 relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-amber-500/30 group shadow-[0_4px_30px_rgba(0,0,0,0.15)] cursor-pointer ${
-                        isDarkMode ? 'bg-[#031d12] border-emerald-900/40 text-emerald-100' : 'bg-white border-gray-200 text-slate-800'
-                      }`}
+                      className="bg-gradient-to-br from-amber-300 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-600 border-4 border-amber-300 hover:border-amber-450 rounded-3xl p-8 relative overflow-hidden shadow-[0_10px_35px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 transition-all duration-300 group cursor-pointer flex flex-col justify-between min-h-[220px]"
                     >
-                      <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-amber-500 to-amber-600"></div>
-                      <div className="flex items-start justify-between">
-                        <div className="space-y-2">
-                          <h3 className="text-lg font-bold text-amber-400 group-hover:text-amber-300 transition-colors">
-                            ১. শিক্ষার্থীর সাফল্য যোগ করুন
+                      <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-r from-emerald-600 to-emerald-800"></div>
+                      <div className="flex items-start justify-between h-full">
+                        <div className="space-y-4">
+                          <h3 className="text-xl sm:text-2xl font-black text-slate-950 flex items-center gap-2.5">
+                            <Award className="h-7 w-7 text-slate-950" />
+                            <span>সাফল্য যোগ করুন</span>
                           </h3>
-                          <p className={`text-xs leading-relaxed font-semibold ${isDarkMode ? 'text-gray-400' : 'text-gray-650'}`}>
-                            বোর্ড পরীক্ষায় জিপিএ-৫ প্রাপ্তি, ক্যালিগ্রাফি বা সাংস্কৃতিক প্রতিযোগিতায় অসামান্য সাফল্য অর্জনকারী শিক্ষার্থীদের তথ্য যুক্ত করুন।
+                          <p className="text-xs sm:text-sm leading-relaxed font-bold text-slate-900/90 max-w-md">
+                            বোর্ড পরীক্ষায় জিপিএ-৫ প্রাপ্তি, হেফজ বা জাতীয় প্রতিযোগিতায় অসামান্য সাফল্য অর্জনকারী শিক্ষার্থীদের গৌরবগাঁথা যুক্ত করুন।
                           </p>
                         </div>
-                        <div className="p-3.5 bg-amber-500/10 text-amber-400 rounded-2xl shrink-0">
-                          <Award className="h-6 w-6" />
+                        <div className="p-4 bg-slate-950/10 text-slate-950 rounded-2xl shrink-0 group-hover:bg-slate-950/20 transition-all">
+                          <Award className="h-8 w-8" />
                         </div>
                       </div>
                     </div>
@@ -2264,25 +2263,37 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                     {/* Card 2: Memorial Members */}
                     <div 
                       onClick={() => setShowMemorialModal(true)}
-                      className={`border rounded-3xl p-6 relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-emerald-500/30 group shadow-[0_4px_30px_rgba(0,0,0,0.15)] cursor-pointer ${
-                        isDarkMode ? 'bg-[#031d12] border-emerald-900/40 text-emerald-100' : 'bg-white border-gray-200 text-slate-800'
-                      }`}
+                      className="bg-gradient-to-br from-amber-300 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-600 border-4 border-amber-300 hover:border-amber-450 rounded-3xl p-8 relative overflow-hidden shadow-[0_10px_35px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 transition-all duration-300 group cursor-pointer flex flex-col justify-between min-h-[220px]"
                     >
-                      <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-emerald-500 to-emerald-600"></div>
-                      <div className="flex items-start justify-between">
-                        <div className="space-y-2">
-                          <h3 className="text-lg font-bold text-emerald-400 group-hover:text-emerald-300 transition-colors">
-                            ২. কমিটির স্মরণীয় ব্যক্তি যোগ করুন
+                      <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-r from-emerald-600 to-emerald-800"></div>
+                      <div className="flex items-start justify-between h-full">
+                        <div className="space-y-4">
+                          <h3 className="text-xl sm:text-2xl font-black text-slate-950 flex items-center gap-2.5">
+                            <BookOpen className="h-7 w-7 text-slate-950" />
+                            <span>মেম্বার অ্যাড করুন</span>
                           </h3>
-                          <p className={`text-xs leading-relaxed font-semibold ${isDarkMode ? 'text-gray-400' : 'text-gray-650'}`}>
-                            মাদ্রাসার প্রতিষ্ঠাতা, ভূমি দাতা বা আজীবন সেবাকারী স্মরণীয় ব্যক্তিত্বদের জীবনকাল ও অবদানের কথা লিখে শ্রদ্ধাঞ্জলি জানান।
+                          <p className="text-xs sm:text-sm leading-relaxed font-bold text-slate-900/90 max-w-md">
+                            মাদ্রাসার প্রতিষ্ঠাতা, আজীবন দাতা বা গৌরবময় পরিচালনাকারী স্মরণীয় ব্যক্তিত্বদের স্মৃতি ও অবদানের কথা লিখে শ্রদ্ধাঞ্জলি জানান।
                           </p>
                         </div>
-                        <div className="p-3.5 bg-emerald-500/10 text-emerald-400 rounded-2xl shrink-0">
-                          <BookOpen className="h-6 w-6" />
+                        <div className="p-4 bg-slate-950/10 text-slate-950 rounded-2xl shrink-0 group-hover:bg-slate-950/20 transition-all">
+                          <BookOpen className="h-8 w-8" />
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Distinct History Header */}
+                  <div className="relative my-12 py-6 text-center border-y border-amber-500/35 bg-gradient-to-r from-emerald-950/15 via-[#042114] to-emerald-950/15 rounded-2xl shadow-inner animate-fade-in">
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#031d12] px-4 py-0.5 border border-amber-500/35 rounded-full text-[10px] text-amber-400 font-bold uppercase tracking-widest font-sans">
+                      Homepage History & Management
+                    </div>
+                    <h2 className="text-2xl md:text-3xl font-black text-amber-400 flex items-center justify-center gap-3">
+                      <span>📜 হোমপেজ তথ্য পরিবর্তন ও হিস্ট্রি প্যানেল</span>
+                    </h2>
+                    <p className="text-xs sm:text-sm text-gray-300 mt-2 font-semibold max-w-2xl mx-auto px-4">
+                      ডাটাবেসের বর্তমান এক্সিসটিং হিস্ট্রি তালিকা। এখান থেকে যেকোনো সাফল্য বা স্মরণীয় ব্যক্তির তথ্য সংশোধন (Edit) বা স্থায়ীভাবে মুছে (Delete) ফেলতে পারেন।
+                    </p>
                   </div>
 
                   {/* History Logs Grid: Achievements and Memorial Tables */}
@@ -2325,17 +2336,17 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                                   <td className="py-3 px-3.5 max-w-[150px] truncate" title={ach.headline}>{ach.headline}</td>
                                   <td className="py-3 px-3.5 max-w-[200px] truncate" title={ach.description}>{ach.description}</td>
                                   <td className="py-3 px-3.5 text-center">
-                                    <div className="flex items-center justify-center gap-2">
+                                    <div className="flex items-center justify-center gap-2.5">
                                       <button
                                         onClick={() => setEditingAchievement(ach)}
-                                        className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 hover:text-amber-300 transition-all cursor-pointer"
+                                        className="p-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 hover:text-amber-300 border border-amber-500/30 hover:border-amber-500/50 hover:scale-110 active:scale-95 transition-all cursor-pointer"
                                         title="সম্পাদনা"
                                       >
                                         <Edit2 className="h-4 w-4" />
                                       </button>
                                       <button
                                         onClick={() => handleDeleteAchievement(ach.id)}
-                                        className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-400 hover:text-rose-300 transition-all cursor-pointer"
+                                        className="p-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 hover:text-rose-400 border border-rose-500/30 hover:border-rose-500/50 hover:scale-110 active:scale-95 transition-all cursor-pointer"
                                         title="মুছে ফেলুন"
                                       >
                                         <Trash2 className="h-4 w-4" />
@@ -2392,20 +2403,20 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                                   <td className="py-3 px-3.5 max-w-[150px] truncate" title={mem.contribution_headline}>{mem.contribution_headline}</td>
                                   <td className="py-3 px-3.5 max-w-[200px] truncate" title={mem.contribution_details}>{mem.contribution_details}</td>
                                   <td className="py-3 px-3.5 text-center">
-                                    <div className="flex items-center justify-center gap-2">
+                                    <div className="flex items-center justify-center gap-2.5">
                                       <button
                                         onClick={() => setEditingMemorial(mem)}
-                                        className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 hover:text-amber-300 transition-all cursor-pointer"
+                                        className="p-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-450 hover:text-amber-300 border border-amber-500/30 hover:border-amber-500/50 hover:scale-110 active:scale-95 transition-all cursor-pointer"
                                         title="সম্পাদনা"
                                       >
-                                        <Edit2 className="h-4 w-4" />
+                                        <Edit2 className="h-4 w-4 text-amber-400" />
                                       </button>
                                       <button
                                         onClick={() => handleDeleteMemorial(mem.id)}
-                                        className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-400 hover:text-rose-300 transition-all cursor-pointer"
+                                        className="p-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 hover:text-rose-400 border border-rose-500/30 hover:border-rose-500/50 hover:scale-110 active:scale-95 transition-all cursor-pointer"
                                         title="মুছে ফেলুন"
                                       >
-                                        <Trash2 className="h-4 w-4" />
+                                        <Trash2 className="h-4 w-4 text-rose-500" />
                                       </button>
                                     </div>
                                   </td>
@@ -2804,7 +2815,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                               type="submit"
                               className="flex-1 py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-md cursor-pointer"
                             >
-                              সংরক্ষণ করুন
+                              আপডেট নিশ্চিত করুন
                             </button>
                           </div>
                         </form>
