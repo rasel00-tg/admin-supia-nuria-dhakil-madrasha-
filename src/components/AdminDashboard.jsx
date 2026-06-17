@@ -21,7 +21,9 @@ import {
   Menu,
   X,
   Award,
-  Trophy
+  Trophy,
+  Edit2,
+  Trash2
 } from 'lucide-react';
 import { 
   supabase, 
@@ -55,6 +57,10 @@ export default function AdminDashboard({ adminUser, onLogout }) {
   const [committeeList, setCommitteeList] = useState([]);
   const [resultsList, setResultsList] = useState([]);
   const [routineList, setRoutineList] = useState([]);
+  const [achievementsList, setAchievementsList] = useState([]);
+  const [memoriamList, setMemoriamList] = useState([]);
+  const [editingAchievement, setEditingAchievement] = useState(null);
+  const [editingMemorial, setEditingMemorial] = useState(null);
   const [selectedClass, setSelectedClass] = useState('দাখিল ১০ম শ্রেণি');
 
   // Forms States
@@ -226,6 +232,30 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       setRoutineList(JSON.parse(localStorage.getItem('routines') || '[]'));
     }
 
+    // Load Achievements
+    try {
+      const { data, error } = await supabase.from('achievements').select('*').order('id', { ascending: true });
+      if (!error && data) {
+        setAchievementsList(data);
+      } else {
+        setAchievementsList(JSON.parse(localStorage.getItem('achievements') || '[]'));
+      }
+    } catch (e) {
+      setAchievementsList(JSON.parse(localStorage.getItem('achievements') || '[]'));
+    }
+
+    // Load Memorial Committee
+    try {
+      const { data, error } = await supabase.from('memorial_committee').select('*').order('id', { ascending: true });
+      if (!error && data) {
+        setMemoriamList(data);
+      } else {
+        setMemoriamList(JSON.parse(localStorage.getItem('memoriam_members') || '[]'));
+      }
+    } catch (e) {
+      setMemoriamList(JSON.parse(localStorage.getItem('memoriam_members') || '[]'));
+    }
+
     setStats({
       students: sCount,
       teachers: tCount,
@@ -237,6 +267,30 @@ export default function AdminDashboard({ adminUser, onLogout }) {
 
   useEffect(() => {
     loadDatabaseData();
+
+    // Setup Realtime subscriptions
+    const achievementsChannel = supabase
+      .channel('admin_achievements_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'achievements' }, () => {
+        supabase.from('achievements').select('*').order('id', { ascending: true }).then(({ data, error }) => {
+          if (!error && data) setAchievementsList(data);
+        });
+      })
+      .subscribe();
+
+    const memoriamChannel = supabase
+      .channel('admin_memoriam_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'memorial_committee' }, () => {
+        supabase.from('memorial_committee').select('*').order('id', { ascending: true }).then(({ data, error }) => {
+          if (!error && data) setMemoriamList(data);
+        });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(achievementsChannel);
+      supabase.removeChannel(memoriamChannel);
+    };
   }, []);
 
   // Handle Student Admission
@@ -598,6 +652,93 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       ]);
     } catch (err) {
       console.log("Supabase insert ignored for memorial_committee:", err.message);
+    }
+  };
+
+  // 1. Edit Achievement Submit
+  const handleEditAchievementSubmit = async (e) => {
+    e.preventDefault();
+    if (!editingAchievement.student_name.trim() || !editingAchievement.headline.trim() || !editingAchievement.description.trim()) {
+      triggerToast('সকল প্রয়োজনীয় ঘর পূরণ করুন।', 'error');
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('achievements')
+        .update({
+          student_name: editingAchievement.student_name.trim(),
+          student_class: editingAchievement.student_class,
+          headline: editingAchievement.headline.trim(),
+          description: editingAchievement.description.trim(),
+          image_url: editingAchievement.image_url ? editingAchievement.image_url.trim() : null
+        })
+        .eq('id', editingAchievement.id);
+
+      if (error) throw error;
+      triggerToast('শিক্ষার্থীর সাফল্য সফলভাবে আপডেট করা হয়েছে!');
+      setEditingAchievement(null);
+      loadDatabaseData();
+    } catch (err) {
+      alert("আপডেট ব্যর্থ হয়েছে! কারণ: " + err.message);
+    }
+  };
+
+  // 2. Edit Memorial Submit
+  const handleEditMemorialSubmit = async (e) => {
+    e.preventDefault();
+    if (!editingMemorial.member_name.trim() || !editingMemorial.lifespan.trim() || !editingMemorial.contribution_headline.trim() || !editingMemorial.contribution_details.trim()) {
+      triggerToast('সকল প্রয়োজনীয় ঘর পূরণ করুন।', 'error');
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('memorial_committee')
+        .update({
+          member_name: editingMemorial.member_name.trim(),
+          lifespan: editingMemorial.lifespan.trim(),
+          contribution_headline: editingMemorial.contribution_headline.trim(),
+          contribution_details: editingMemorial.contribution_details.trim()
+        })
+        .eq('id', editingMemorial.id);
+
+      if (error) throw error;
+      triggerToast('কমিটির স্মরণীয় ব্যক্তিত্ব সফলভাবে আপডেট করা হয়েছে!');
+      setEditingMemorial(null);
+      loadDatabaseData();
+    } catch (err) {
+      alert("আপডেট ব্যর্থ হয়েছে! কারণ: " + err.message);
+    }
+  };
+
+  // 3. Delete Achievement
+  const handleDeleteAchievement = async (id) => {
+    if (!window.confirm("আপনি কি নিশ্চিতভাবে এই শিক্ষার্থীর সাফল্য ডিলিট করতে চান?")) return;
+    try {
+      const { error } = await supabase
+        .from('achievements')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      triggerToast('শিক্ষার্থীর সাফল্য সফলভাবে ডিলিট করা হয়েছে!');
+      loadDatabaseData();
+    } catch (err) {
+      alert("ডিলিট ব্যর্থ হয়েছে! কারণ: " + err.message);
+    }
+  };
+
+  // 4. Delete Memorial
+  const handleDeleteMemorial = async (id) => {
+    if (!window.confirm("আপনি কি নিশ্চিতভাবে এই স্মরণীয় ব্যক্তিত্ব ডিলিট করতে চান?")) return;
+    try {
+      const { error } = await supabase
+        .from('memorial_committee')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      triggerToast('স্মরণীয় ব্যক্তিত্ব সফলভাবে ডিলিট করা হয়েছে!');
+      loadDatabaseData();
+    } catch (err) {
+      alert("ডিলিট ব্যর্থ হয়েছে! কারণ: " + err.message);
     }
   };
 
@@ -2173,6 +2314,143 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                     </div>
                   </div>
 
+                  {/* History Logs Grid: Achievements and Memorial Tables */}
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                    {/* Table 1: Student Achievements */}
+                    <div className={`border rounded-3xl p-6 shadow-xl relative ${
+                      isDarkMode ? 'bg-[#031d12] border-emerald-900/40 text-emerald-100' : 'bg-white border-gray-200 text-slate-900'
+                    }`}>
+                      <h3 className="text-base font-bold text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <Award className="h-5 w-5 text-amber-400" />
+                          <span>১. শিক্ষার্থীর সাফল্য তালিকা</span>
+                        </span>
+                        <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-black uppercase tracking-wider py-1 px-3 rounded-full border border-emerald-500/25">
+                          মোট: {achievementsList.length}টি
+                        </span>
+                      </h3>
+                      <div className="overflow-x-auto scrollbar-none">
+                        <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                          <thead>
+                            <tr className={`border-b text-amber-450 font-bold ${
+                              isDarkMode ? 'bg-[#02100a]/80 border-emerald-900' : 'bg-slate-50 border-gray-250 text-emerald-850'
+                            }`}>
+                              <th className="py-3 px-3.5">নাম ও শ্রেণী</th>
+                              <th className="py-3 px-3.5">সাফল্য হেডলাইন</th>
+                              <th className="py-3 px-3.5">বিবরণ</th>
+                              <th className="py-3 px-3.5 text-center">অ্যাকশন</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-emerald-900/20">
+                            {achievementsList.length > 0 ? (
+                              achievementsList.map((ach) => (
+                                <tr key={ach.id} className={`font-semibold font-sans transition-colors ${
+                                  isDarkMode ? 'hover:bg-white/5 text-emerald-100' : 'hover:bg-slate-50 text-slate-800'
+                                }`}>
+                                  <td className="py-3 px-3.5">
+                                    <div className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{ach.student_name}</div>
+                                    <div className="text-[10px] text-gray-400">{ach.student_class}</div>
+                                  </td>
+                                  <td className="py-3 px-3.5 max-w-[150px] truncate" title={ach.headline}>{ach.headline}</td>
+                                  <td className="py-3 px-3.5 max-w-[200px] truncate" title={ach.description}>{ach.description}</td>
+                                  <td className="py-3 px-3.5 text-center">
+                                    <div className="flex items-center justify-center gap-2">
+                                      <button
+                                        onClick={() => setEditingAchievement(ach)}
+                                        className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 hover:text-amber-300 transition-all cursor-pointer"
+                                        title="সম্পাদনা"
+                                      >
+                                        <Edit2 className="h-4 w-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteAchievement(ach.id)}
+                                        className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-400 hover:text-rose-300 transition-all cursor-pointer"
+                                        title="মুছে ফেলুন"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan="4" className="py-8 text-center text-gray-400 font-bold">কোনো শিক্ষার্থীর সাফল্য তালিকাভুক্ত নেই।</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Table 2: Memorial Members */}
+                    <div className={`border rounded-3xl p-6 shadow-xl relative ${
+                      isDarkMode ? 'bg-[#031d12] border-emerald-900/40 text-emerald-100' : 'bg-white border-gray-200 text-slate-900'
+                    }`}>
+                      <h3 className="text-base font-bold text-emerald-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <BookOpen className="h-5 w-5 text-emerald-400" />
+                          <span>২. স্মরণীয় ব্যক্তি তালিকা</span>
+                        </span>
+                        <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-black uppercase tracking-wider py-1 px-3 rounded-full border border-emerald-500/25">
+                          মোট: {memoriamList.length}জন
+                        </span>
+                      </h3>
+                      <div className="overflow-x-auto scrollbar-none">
+                        <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                          <thead>
+                            <tr className={`border-b text-amber-450 font-bold ${
+                              isDarkMode ? 'bg-[#02100a]/80 border-emerald-900' : 'bg-slate-50 border-gray-250 text-emerald-850'
+                            }`}>
+                              <th className="py-3 px-3.5">নাম ও জীবনকাল</th>
+                              <th className="py-3 px-3.5">অবদান হেডলাইন</th>
+                              <th className="py-3 px-3.5">অবদান বিবরণ</th>
+                              <th className="py-3 px-3.5 text-center">অ্যাকশন</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-emerald-900/20">
+                            {memoriamList.length > 0 ? (
+                              memoriamList.map((mem) => (
+                                <tr key={mem.id} className={`font-semibold font-sans transition-colors ${
+                                  isDarkMode ? 'hover:bg-white/5 text-emerald-100' : 'hover:bg-slate-50 text-slate-800'
+                                }`}>
+                                  <td className="py-3 px-3.5">
+                                    <div className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{mem.member_name}</div>
+                                    <div className="text-[10px] text-gray-400 font-sans">{mem.lifespan}</div>
+                                  </td>
+                                  <td className="py-3 px-3.5 max-w-[150px] truncate" title={mem.contribution_headline}>{mem.contribution_headline}</td>
+                                  <td className="py-3 px-3.5 max-w-[200px] truncate" title={mem.contribution_details}>{mem.contribution_details}</td>
+                                  <td className="py-3 px-3.5 text-center">
+                                    <div className="flex items-center justify-center gap-2">
+                                      <button
+                                        onClick={() => setEditingMemorial(mem)}
+                                        className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 hover:text-amber-300 transition-all cursor-pointer"
+                                        title="সম্পাদনা"
+                                      >
+                                        <Edit2 className="h-4 w-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteMemorial(mem.id)}
+                                        className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-400 hover:text-rose-300 transition-all cursor-pointer"
+                                        title="মুছে ফেলুন"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan="4" className="py-8 text-center text-gray-400 font-bold">কোনো স্মরণীয় ব্যক্তিত্ব তালিকাভুক্ত নেই।</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Popup Modal 1: Student Achievement */}
                   {showAchievementModal && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
@@ -2346,6 +2624,200 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                             <Plus className="h-4.5 w-4.5" />
                             <span>স্মরণীয় ব্যক্তিত্ব যুক্ত করুন</span>
                           </button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Popup Modal 3: Edit Achievement */}
+                  {editingAchievement && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+                      <div className={`w-full max-w-lg rounded-3xl border-t-4 border-amber-500 p-6 md:p-8 shadow-2xl relative ${
+                        isDarkMode ? 'bg-[#031a10] border-emerald-900/50 text-white' : 'bg-white border-gray-200 text-slate-900'
+                      }`}>
+                        <button 
+                          onClick={() => setEditingAchievement(null)}
+                          className="absolute top-4 right-4 p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                        <h3 className="text-lg font-black text-amber-400 mb-6 flex items-center gap-2">
+                          <Award className="h-5 w-5" />
+                          <span>শিক্ষার্থীর সাফল্য সম্পাদন করুন</span>
+                        </h3>
+                        <form onSubmit={handleEditAchievementSubmit} className="space-y-4 text-left">
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-450 mb-1">শিক্ষার্থীর নাম *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={editingAchievement.student_name}
+                              onChange={(e) => setEditingAchievement({...editingAchievement, student_name: e.target.value})}
+                              placeholder="মোহাম্মদ তানভীর রহমান"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">শ্রেণী নির্বাচন করুন *</label>
+                            <select 
+                              value={editingAchievement.student_class}
+                              onChange={(e) => setEditingAchievement({...editingAchievement, student_class: e.target.value})}
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            >
+                              {[
+                                "দাখিল ১০ম শ্রেণি", "দাখিল ৯ম শ্রেণি", "দাখিল ৮ম শ্রেণি", "দাখিল ৭ম শ্রেণি", "দাখিল ৬ষ্ঠ শ্রেণি",
+                                "৫ম শ্রেণি", "৪র্থ শ্রেণি", "৩য় শ্রেণি", "২য় শ্রেণি", "১ম শ্রেণি", "শিশু শ্রেণি"
+                              ].map(cls => (
+                                <option key={cls} value={cls}>{cls}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">সাফল্য হেডলাইন *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={editingAchievement.headline}
+                              onChange={(e) => setEditingAchievement({...editingAchievement, headline: e.target.value})}
+                              placeholder="সাফল্য হেডলাইন লিখুন"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-450 mb-1">সাফল্য বিবরণী *</label>
+                            <textarea 
+                              required
+                              rows="3"
+                              value={editingAchievement.description}
+                              onChange={(e) => setEditingAchievement({...editingAchievement, description: e.target.value})}
+                              placeholder="সাফল্য বিবরণী লিখুন"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            ></textarea>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-450 mb-1">ছবির লিংক (Image URL)</label>
+                            <input 
+                              type="text"
+                              value={editingAchievement.image_url || ''}
+                              onChange={(e) => setEditingAchievement({...editingAchievement, image_url: e.target.value})}
+                              placeholder="https://example.com/photo.jpg"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div className="flex gap-4 mt-6">
+                            <button 
+                              type="button"
+                              onClick={() => setEditingAchievement(null)}
+                              className="flex-1 py-3 border border-emerald-800/60 hover:bg-emerald-950/20 text-emerald-300 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all cursor-pointer"
+                            >
+                              বাতিল
+                            </button>
+                            <button 
+                              type="submit"
+                              className="flex-1 py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-md cursor-pointer"
+                            >
+                              সংরক্ষণ করুন
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Popup Modal 4: Edit Memorial Figure */}
+                  {editingMemorial && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+                      <div className={`w-full max-w-lg rounded-3xl border-t-4 border-emerald-500 p-6 md:p-8 shadow-2xl relative ${
+                        isDarkMode ? 'bg-[#031a10] border-emerald-900/50 text-white' : 'bg-white border-gray-200 text-slate-900'
+                      }`}>
+                        <button 
+                          onClick={() => setEditingMemorial(null)}
+                          className="absolute top-4 right-4 p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                        <h3 className="text-lg font-black text-emerald-400 mb-6 flex items-center gap-2">
+                          <BookOpen className="h-5 w-5" />
+                          <span>স্মরণীয় ব্যক্তিত্ব সম্পাদন করুন</span>
+                        </h3>
+                        <form onSubmit={handleEditMemorialSubmit} className="space-y-4 text-left">
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">স্মরণীয় ব্যক্তির নাম *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={editingMemorial.member_name}
+                              onChange={(e) => setEditingMemorial({...editingMemorial, member_name: e.target.value})}
+                              placeholder="মরহুম আলহাজ্ব নূর উদ্দিন আহমেদ"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">জন্ম-মৃত্যু সাল (জীবনকাল) *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={editingMemorial.lifespan}
+                              onChange={(e) => setEditingMemorial({...editingMemorial, lifespan: e.target.value})}
+                              placeholder="উদা: ১৯৩০ - ২০০৮"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900 font-sans'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান হেডলাইন *</label>
+                            <input 
+                              type="text"
+                              required
+                              value={editingMemorial.contribution_headline}
+                              onChange={(e) => setEditingMemorial({...editingMemorial, contribution_headline: e.target.value})}
+                              placeholder="অবদান হেডলাইন লিখুন"
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান বিস্তারিত *</label>
+                            <textarea 
+                              required
+                              rows="4"
+                              value={editingMemorial.contribution_details}
+                              onChange={(e) => setEditingMemorial({...editingMemorial, contribution_details: e.target.value})}
+                              placeholder="অবদান বিস্তারিত লিখুন"
+                              className={`w-full border-[#02100a] border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
+                              }`}
+                            ></textarea>
+                          </div>
+                          <div className="flex gap-4 mt-6">
+                            <button 
+                              type="button"
+                              onClick={() => setEditingMemorial(null)}
+                              className="flex-1 py-3 border border-emerald-800/60 hover:bg-emerald-950/20 text-emerald-300 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all cursor-pointer"
+                            >
+                              বাতিল
+                            </button>
+                            <button 
+                              type="submit"
+                              className="flex-1 py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-md cursor-pointer"
+                            >
+                              সংরক্ষণ করুন
+                            </button>
+                          </div>
                         </form>
                       </div>
                     </div>
