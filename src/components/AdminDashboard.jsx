@@ -35,7 +35,7 @@ import {
   getContactMessages,
   createNewUser
 } from '../supabaseClient';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import { db } from '../firebaseClient';
 
 export default function AdminDashboard({ adminUser, onLogout }) {
@@ -3095,31 +3095,28 @@ function OnlineAdmissionsTab({ isDarkMode, triggerToast }) {
   const [rollNo, setRollNo] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
 
-  const fetchPendingAdmissions = async () => {
+  useEffect(() => {
     setLoading(true);
-    try {
-      const q = query(
-        collection(db, "admissions"),
-        where("status", "==", "pending")
-      );
-      const snap = await getDocs(q);
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const q = query(
+      collection(db, "admissions"),
+      where("status", "==", "pending")
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       list.sort((a, b) => {
         const t1 = a.applied_at?.toDate()?.getTime() || 0;
         const t2 = b.applied_at?.toDate()?.getTime() || 0;
         return t2 - t1;
       });
       setAdmissions(list);
-    } catch (err) {
+      setLoading(false);
+    }, (err) => {
       console.error("Fetch pending admissions error:", err);
       triggerToast("আবেদন তালিকা লোড করতে সমস্যা হয়েছে।", "error");
-    } finally {
       setLoading(false);
-    }
-  };
+    });
 
-  useEffect(() => {
-    fetchPendingAdmissions();
+    return () => unsubscribe();
   }, []);
 
   const checkRollDuplicate = async (cls, rollVal) => {
@@ -3188,7 +3185,7 @@ function OnlineAdmissionsTab({ isDarkMode, triggerToast }) {
       setStudentId('');
       setPassword('');
       setRollNo('');
-      fetchPendingAdmissions();
+      // Real-time listener handles state updates automatically
     } catch (err) {
       console.error("Accept error:", err);
       alert("আবেদন অনুমোদন করতে সমস্যা হয়েছে। কারণ: " + err.message);
@@ -3223,7 +3220,7 @@ function OnlineAdmissionsTab({ isDarkMode, triggerToast }) {
       setShowDetailsModal(false);
       setSelectedAdmission(null);
       setRejectionReason('');
-      fetchPendingAdmissions();
+      // Real-time listener handles state updates automatically
     } catch (err) {
       console.error("Reject error:", err);
       alert("আবেদন বাতিল করতে সমস্যা হয়েছে। কারণ: " + err.message);
@@ -3242,24 +3239,6 @@ function OnlineAdmissionsTab({ isDarkMode, triggerToast }) {
   return (
     <div className="space-y-6">
       
-      {/* Tab Banner */}
-      <div className={`bg-gradient-to-r border rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden ${
-        isDarkMode ? 'from-[#032416] via-[#09472e] to-[#032416] border-emerald-500/20' : 'from-emerald-800 to-emerald-950 border-gray-200 text-white'
-      }`}>
-        <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="space-y-2 z-10 relative">
-          <span className="bg-amber-500/10 text-amber-300 text-[10px] font-black uppercase tracking-wider py-1 px-3.5 rounded-full border border-amber-500/25">
-            Admission Officer Panel
-          </span>
-          <h2 className="text-xl md:text-2xl font-black text-white leading-tight">
-            অনলাইন ভর্তি আবেদন পর্যালোচনা
-          </h2>
-          <p className="text-xs text-emerald-250 leading-relaxed font-semibold max-w-xl">
-            মাদ্রাসার অনলাইন ভর্তি কার্যক্রমের পেন্ডিং আবেদনসমূহ পর্যালোচনা করুন। আবেদনসমূহ পরীক্ষা করে অনুমোদন (Accept) অথবা বাতিল (Reject) করুন।
-          </p>
-        </div>
-      </div>
-
       {/* Main List Box */}
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 bg-white/5 border border-emerald-900/10 rounded-3xl">
