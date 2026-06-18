@@ -24,7 +24,9 @@ import {
   Trophy,
   Edit2,
   Trash2,
-  FileText
+  FileText,
+  User,
+  ShieldCheck
 } from 'lucide-react';
 import { 
   supabase, 
