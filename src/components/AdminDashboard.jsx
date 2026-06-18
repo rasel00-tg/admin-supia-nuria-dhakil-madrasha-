@@ -23,7 +23,8 @@ import {
   Award,
   Trophy,
   Edit2,
-  Trash2
+  Trash2,
+  FileText
 } from 'lucide-react';
 import { 
   supabase, 
@@ -64,6 +65,9 @@ export default function AdminDashboard({ adminUser, onLogout }) {
   const [editingAchievement, setEditingAchievement] = useState(null);
   const [editingMemorial, setEditingMemorial] = useState(null);
   const [selectedClass, setSelectedClass] = useState('দাখিল ১০ম শ্রেণি');
+  const [selectedMemorialFile, setSelectedMemorialFile] = useState(null);
+  const [selectedEditMemorialFile, setSelectedEditMemorialFile] = useState(null);
+  const [isMemorialUploading, setIsMemorialUploading] = useState(false);
 
   // Forms States
   // 1. Student Form
@@ -198,16 +202,21 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       console.error("Error loading messages:", err);
     }
 
-    // Load Committee
+    // Load Committee from Firestore
     try {
-      const { data, error } = await supabase.from('committee_members').select('*').order('id', { ascending: true });
-      if (!error && data) {
+      const q = query(collection(db, "committee"), orderBy("created_at", "asc"));
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCommitteeList(data);
+    } catch (e) {
+      console.error("Error loading committee from firestore:", e);
+      try {
+        const querySnapshot = await getDocs(collection(db, "committee"));
+        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setCommitteeList(data);
-      } else {
+      } catch (innerErr) {
         setCommitteeList(JSON.parse(localStorage.getItem('committee_members') || '[]'));
       }
-    } catch (e) {
-      setCommitteeList(JSON.parse(localStorage.getItem('committee_members') || '[]'));
     }
 
     // Load Results
@@ -311,9 +320,25 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       }
     );
 
+    const unsubCommittee = onSnapshot(
+      query(collection(db, "committee"), orderBy("created_at", "asc")),
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCommitteeList(data);
+      },
+      (error) => {
+        console.error("Firestore committee subscription error, falling back to simple listen:", error);
+        onSnapshot(collection(db, "committee"), (snapshot) => {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setCommitteeList(data);
+        });
+      }
+    );
+
     return () => {
       unsubAchievements();
       unsubMemoriam();
+      unsubCommittee();
     };
   }, []);
 
@@ -432,7 +457,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     }
   };
 
-  // Handle Committee Submission
+  // Handle Committee Submission (connected to Firestore)
   const handleCommitteeSubmit = async (e) => {
     e.preventDefault();
     if (!committeeForm.name.trim() || !committeeForm.phone.trim()) {
@@ -440,36 +465,21 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       return;
     }
 
-    const newMember = {
-      id: Date.now(),
-      name: committeeForm.name.trim(),
-      designation: committeeForm.designation,
-      phone: committeeForm.phone.trim(),
-      email: committeeForm.email.trim() || null,
-      created_at: new Date().toISOString()
-    };
-
-    // Save locally
-    const local = JSON.parse(localStorage.getItem('committee_members') || '[]');
-    const updated = [...local, newMember];
-    localStorage.setItem('committee_members', JSON.stringify(updated));
-    setCommitteeList(updated);
-
-    triggerToast('নতুন কমিটির সদস্য সফলভাবে যোগ হয়েছে!');
-    setCommitteeForm({ name: '', designation: 'সভাপতি', phone: '', email: '' });
-
-    // Try Supabase insert
     try {
-      await supabase.from('committee_members').insert([
-        {
-          name: newMember.name,
-          designation: newMember.designation,
-          phone: newMember.phone,
-          email: newMember.email
-        }
-      ]);
+      await addDoc(collection(db, "committee"), {
+        name: committeeForm.name.trim(),
+        designation: committeeForm.designation,
+        phone: committeeForm.phone.trim(),
+        email: committeeForm.email.trim() || null,
+        bio: 'পরিচালনা কমিটির সম্মানিত সদস্য।',
+        created_at: new Date()
+      });
+
+      triggerToast('নতুন কমিটির সদস্য সফলভাবে যোগ হয়েছে!');
+      setCommitteeForm({ name: '', designation: 'সভাপতি', phone: '', email: '' });
+      alert("সফলভাবে ডাটাবেসে জমা হয়েছে!");
     } catch (err) {
-      console.log("Supabase insert ignored for committee:", err.message);
+      alert("ডাটা জমা হয়নি! কারণ: " + err.message);
     }
   };
 
@@ -607,7 +617,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     }
   };
 
-  // Handle Homepage Memorial Submission
+  // Handle Homepage Memorial Submission (with optional image upload)
   const handleMemorialSubmit = async (e) => {
     e.preventDefault();
     if (!memorialForm.member_name.trim() || !memorialForm.lifespan.trim() || !memorialForm.contribution_headline.trim() || !memorialForm.contribution_details.trim()) {
@@ -615,12 +625,26 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       return;
     }
 
+    setIsMemorialUploading(true);
+    triggerToast('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।', 'success');
+
     try {
+      let finalImageUrl = '';
+
+      if (selectedMemorialFile) {
+        const { getStorage, ref: sRef, uploadBytes, getDownloadURL } = await import('firebase/storage');
+        const storage = getStorage();
+        const fileRef = sRef(storage, `memorial/${Date.now()}_${selectedMemorialFile.name}`);
+        const snapshot = await uploadBytes(fileRef, selectedMemorialFile);
+        finalImageUrl = await getDownloadURL(snapshot.ref);
+      }
+
       await addDoc(collection(db, "memorial_committee"), {
         member_name: memorialForm.member_name.trim(),
         lifespan: memorialForm.lifespan.trim(),
         contribution_headline: memorialForm.contribution_headline.trim(),
         contribution_details: memorialForm.contribution_details.trim(),
+        image_url: finalImageUrl,
         created_at: new Date()
       });
 
@@ -629,12 +653,16 @@ export default function AdminDashboard({ adminUser, onLogout }) {
         member_name: '',
         lifespan: '',
         contribution_headline: '',
-        contribution_details: ''
+        contribution_details: '',
+        image_url: ''
       });
+      setSelectedMemorialFile(null);
       setShowMemorialModal(false);
       alert("সফলভাবে ডাটাবেসে জমা হয়েছে!");
     } catch (err) {
       alert("ডাটা জমা হয়নি! কারণ: " + err.message);
+    } finally {
+      setIsMemorialUploading(false);
     }
   };
 
@@ -663,27 +691,45 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     }
   };
 
-  // 2. Edit Memorial Submit
+  // 2. Edit Memorial Submit (with optional image upload / update)
   const handleEditMemorialSubmit = async (e) => {
     e.preventDefault();
     if (!editingMemorial.member_name.trim() || !editingMemorial.lifespan.trim() || !editingMemorial.contribution_headline.trim() || !editingMemorial.contribution_details.trim()) {
       triggerToast('সকল প্রয়োজনীয় ঘর পূরণ করুন।', 'error');
       return;
     }
+    
+    setIsMemorialUploading(true);
+    triggerToast('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।', 'success');
+
     try {
+      let finalImageUrl = editingMemorial.image_url || '';
+
+      if (selectedEditMemorialFile) {
+        const { getStorage, ref: sRef, uploadBytes, getDownloadURL } = await import('firebase/storage');
+        const storage = getStorage();
+        const fileRef = sRef(storage, `memorial/${Date.now()}_${selectedEditMemorialFile.name}`);
+        const snapshot = await uploadBytes(fileRef, selectedEditMemorialFile);
+        finalImageUrl = await getDownloadURL(snapshot.ref);
+      }
+
       const docRef = doc(db, "memorial_committee", editingMemorial.id);
       await updateDoc(docRef, {
         member_name: editingMemorial.member_name.trim(),
         lifespan: editingMemorial.lifespan.trim(),
         contribution_headline: editingMemorial.contribution_headline.trim(),
-        contribution_details: editingMemorial.contribution_details.trim()
+        contribution_details: editingMemorial.contribution_details.trim(),
+        image_url: finalImageUrl
       });
 
       triggerToast('কমিটির স্মরণীয় ব্যক্তিত্ব সফলভাবে আপডেট করা হয়েছে!');
       setEditingMemorial(null);
+      setSelectedEditMemorialFile(null);
       loadDatabaseData();
     } catch (err) {
       alert("আপডেট ব্যর্থ হয়েছে! কারণ: " + err.message);
+    } finally {
+      setIsMemorialUploading(false);
     }
   };
 
@@ -807,6 +853,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
               { id: 'home', label: 'ড্যাশবোর্ড', icon: Home },
               { id: 'students', label: 'শিক্ষার্থী', icon: UserPlus },
               { id: 'teachers', label: 'শিক্ষক', icon: Users },
+              { id: 'online_admissions', label: 'অনলাইন আবেদন', icon: FileText },
               { id: 'committee', label: 'মাদ্রাসার কমিটির সদস্যগন', icon: Award },
               { id: 'result', label: 'রেজাল্ট', icon: Trophy },
               { id: 'routine', label: 'রুটিন', icon: Calendar },
@@ -893,6 +940,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
               { id: 'home', label: 'ড্যাশবোর্ড', icon: Home },
               { id: 'students', label: 'শিক্ষার্থী', icon: UserPlus },
               { id: 'teachers', label: 'শিক্ষক', icon: Users },
+              { id: 'online_admissions', label: 'অনলাইন আবেদন', icon: FileText },
               { id: 'committee', label: 'মাদ্রাসার কমিটির সদস্যগন', icon: Award },
               { id: 'result', label: 'রেজাল্ট', icon: Trophy },
               { id: 'routine', label: 'রুটিন', icon: Calendar },
@@ -1031,7 +1079,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
           {loading ? (
             <div className="h-[50vh] flex flex-col items-center justify-center">
               <Loader2 className="h-10 w-10 animate-spin text-amber-500" />
-              <p className="text-xs text-emerald-450 mt-3 font-semibold">লাইভ ডাটাবেস সিঙ্ক হচ্ছে...</p>
+              <p className="text-xs text-amber-400 mt-3 font-semibold font-serif tracking-wide">📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।</p>
             </div>
           ) : (
             <div className="space-y-8">
@@ -2262,7 +2310,11 @@ export default function AdminDashboard({ adminUser, onLogout }) {
 
                     {/* Card 2: Memorial Members */}
                     <div 
-                      onClick={() => setShowMemorialModal(true)}
+                      onClick={() => {
+                        setMemorialForm({ member_name: '', lifespan: '', contribution_headline: '', contribution_details: '', image_url: '' });
+                        setSelectedMemorialFile(null);
+                        setShowMemorialModal(true);
+                      }}
                       className="bg-gradient-to-br from-amber-300 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-600 border-4 border-amber-300 hover:border-amber-450 rounded-3xl p-8 relative overflow-hidden shadow-[0_10px_35px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 transition-all duration-300 group cursor-pointer flex flex-col justify-between min-h-[220px]"
                     >
                       <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-r from-emerald-600 to-emerald-800"></div>
@@ -2405,7 +2457,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                                   <td className="py-3 px-3.5 text-center">
                                     <div className="flex items-center justify-center gap-2.5">
                                       <button
-                                        onClick={() => setEditingMemorial(mem)}
+                                        onClick={() => { setSelectedEditMemorialFile(null); setEditingMemorial(mem); }}
                                         className="p-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-450 hover:text-amber-300 border border-amber-500/30 hover:border-amber-500/50 hover:scale-110 active:scale-95 transition-all cursor-pointer"
                                         title="সম্পাদনা"
                                       >
@@ -2530,91 +2582,167 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                     </div>
                   )}
 
-                  {/* Popup Modal 2: Memorial Figure */}
+                  {/* Popup Modal 2: Memorial Figure — Single-Column Inline Layout */}
                   {showMemorialModal && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-                      <div className={`w-full max-w-lg rounded-3xl border-t-4 border-emerald-500 p-6 md:p-8 shadow-2xl relative ${
-                        isDarkMode ? 'bg-[#031a10] border-emerald-900/50 text-white' : 'bg-white border-gray-200 text-slate-900'
+                    <div className="fixed inset-0 z-50 flex items-start justify-center pt-4 pb-4 px-3 sm:px-4 bg-black/75 backdrop-blur-sm animate-fade-in overflow-y-auto">
+                      <div className={`w-full max-w-xl rounded-3xl border-t-4 border-emerald-500 shadow-2xl relative my-4 p-5 md:p-6 ${
+                        isDarkMode ? 'bg-[#031a10] text-white' : 'bg-white text-slate-900'
                       }`}>
-                        <button 
-                          onClick={() => setShowMemorialModal(false)}
-                          className="absolute top-4 right-4 p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer animate-pulse"
-                        >
-                          <X className="h-5 w-5" />
-                        </button>
-                        <h3 className="text-lg font-black text-emerald-400 mb-6 flex items-center gap-2">
-                          <BookOpen className="h-5 w-5" />
-                          <span>কমিটির স্মরণীয় ব্যক্তিত্ব ফর্ম</span>
-                        </h3>
-                        <form onSubmit={handleMemorialSubmit} className="space-y-4 text-left">
+
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between pb-4 border-b border-emerald-900/30 mb-4">
+                          <h3 className="text-base font-black text-emerald-400 flex items-center gap-2">
+                            <BookOpen className="h-5 w-5 shrink-0" />
+                            <span>কমিটির স্মরণীয় ব্যক্তিত্ব ফর্ম</span>
+                          </h3>
+                          <button
+                            onClick={() => setShowMemorialModal(false)}
+                            className="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                          >
+                            <X className="h-5 w-5" />
+                          </button>
+                        </div>
+
+                        {/* Form Body */}
+                        <form onSubmit={handleMemorialSubmit} className="space-y-3.5 text-left">
                           <div>
-                            <label className="block text-xs font-bold text-emerald-455 mb-1">স্মরণীয় ব্যক্তির নাম *</label>
-                            <input 
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">স্মরণীয় ব্যক্তির নাম *</label>
+                            <input
                               type="text"
                               required
                               value={memorialForm.member_name}
                               onChange={(e) => setMemorialForm({...memorialForm, member_name: e.target.value})}
                               placeholder="মরহুম আলহাজ্ব নূর উদ্দিন আহমেদ"
-                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 transition-colors ${
                                 isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-emerald-455 mb-1">জন্ম-মৃত্যু সাল (জীবনকাল) *</label>
-                            <input 
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">জন্ম-মৃত্যু সাল (জীবনকাল) *</label>
+                            <input
                               type="text"
                               required
                               value={memorialForm.lifespan}
                               onChange={(e) => setMemorialForm({...memorialForm, lifespan: e.target.value})}
                               placeholder="উদা: ১৯৩০ - ২০০৮"
-                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900 font-sans'
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 transition-colors ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান হেডলাইন *</label>
-                            <input 
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">অবদান হেডলাইন * <span className="text-gray-500 font-normal">(সর্বোচ্চ ২৫ অক্ষর)</span></label>
+                            <input
                               type="text"
                               required
                               maxLength={25}
                               value={memorialForm.contribution_headline}
                               onChange={(e) => setMemorialForm({...memorialForm, contribution_headline: e.target.value})}
                               placeholder="মাদ্রাসার ভূমি দাতা ও প্রতিষ্ঠাতা সভাপতি।"
-                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 transition-colors ${
                                 isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             />
-                            <div className="flex justify-between items-center mt-1 px-1">
-                              <span className="text-[10px] text-gray-500">সর্বোচ্চ ২৫ অক্ষর</span>
+                            <div className="flex justify-end mt-0.5 pr-1">
                               <span className={`text-[10px] font-bold ${
                                 memorialForm.contribution_headline.length >= 25 ? 'text-rose-500' : 'text-emerald-400'
                               }`}>
-                                {memorialForm.contribution_headline.length}/25 অক্ষর
+                                {memorialForm.contribution_headline.length}/25
                               </span>
                             </div>
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান বিস্তারিত *</label>
-                            <textarea 
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">অবদান বিস্তারিত *</label>
+                            <textarea
                               required
-                              rows="4"
+                              rows="3"
                               value={memorialForm.contribution_details}
                               onChange={(e) => setMemorialForm({...memorialForm, contribution_details: e.target.value})}
                               placeholder="মাদ্রাসার প্রতিষ্ঠা ও এর উন্নয়নে এই ব্যক্তির অবদান ও শ্রদ্ধাঞ্জলি স্মৃতিসমূহ বিস্তারিত লিখুন।"
-                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 transition-colors ${
                                 isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             ></textarea>
                           </div>
-                          <button 
+
+                          {/* Optional Image Upload */}
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">
+                              ছবি আপলোড করুন <span className="text-gray-500 font-normal">(ঐচ্ছিক)</span>
+                            </label>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) setSelectedMemorialFile(f);
+                              }}
+                              className={`w-full border rounded-xl py-2 px-3 text-xs focus:outline-none ${
+                                isDarkMode
+                                  ? 'bg-[#02100a] border-emerald-800/60 text-gray-300 file:bg-emerald-900/70 file:text-emerald-300 file:border-0 file:rounded-lg file:px-3 file:py-1 file:mr-2 file:cursor-pointer file:text-xs'
+                                  : 'bg-slate-50 border-gray-300 text-slate-700'
+                              }`}
+                            />
+                            {selectedMemorialFile && (
+                              <div className="mt-2 flex items-center gap-2.5 bg-emerald-900/20 rounded-xl p-2 border border-emerald-800/30">
+                                <img
+                                  src={URL.createObjectURL(selectedMemorialFile)}
+                                  alt="preview"
+                                  className="w-12 h-12 object-cover rounded-lg border border-amber-400/40 shrink-0"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-[10px] text-amber-400 font-bold">নির্ধারিত ছবি</p>
+                                  <p className="text-[9px] text-gray-400 truncate">{selectedMemorialFile.name}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedMemorialFile(null)}
+                                  className="ml-auto p-1 rounded-full hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer shrink-0"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <button
                             type="submit"
-                            className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-md mt-6 flex items-center justify-center gap-1.5 cursor-pointer"
+                            disabled={isMemorialUploading}
+                            className={`w-full py-3 font-black text-xs sm:text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer ${
+                              isMemorialUploading
+                                ? 'bg-amber-500/50 text-slate-950/60 cursor-not-allowed'
+                                : 'bg-amber-500 hover:bg-amber-600 text-slate-950 active:scale-95'
+                            }`}
                           >
-                            <Plus className="h-4.5 w-4.5" />
-                            <span>স্মরণীয় ব্যক্তিত্ব যুক্ত করুন</span>
+                            {isMemorialUploading ? (
+                              <><Loader2 className="h-4 w-4 animate-spin" /><span>📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।</span></>
+                            ) : (
+                              <><Plus className="h-4 w-4" /><span>স্মরণীয় ব্যক্তিত্ব যুক্ত করুন</span></>
+                            )}
                           </button>
+
+                          {/* Islamic Prayer Banner - Inline under submit button */}
+                          <div className="bg-gradient-to-br from-[#022e1b] via-[#032d1a] to-[#043d25] border border-amber-400/25 rounded-2xl p-4 text-center relative overflow-hidden mt-4">
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-amber-400/5 rounded-full blur-2xl pointer-events-none" />
+                            <div className="absolute inset-1 border border-amber-400/10 rounded-xl pointer-events-none" />
+                            <div className="relative z-10 space-y-2.5">
+                              <div className="text-3xl leading-none">🕌</div>
+                              <div className="text-xl text-amber-400/70 font-serif leading-none">﷽</div>
+                              <h4 className="text-xs font-black text-amber-300 tracking-wider uppercase border-b border-amber-400/20 pb-1.5">
+                                স্মরণ ও শ্রদ্ধাঞ্জলি
+                              </h4>
+                              <p className="text-[10px] leading-relaxed font-semibold text-amber-100/80 text-justify">
+                                যারা এই মাদ্রাসার প্রতিষ্ঠা, উন্নয়ন ও পরিচালনায় অসামান্য অবদান রেখে আজ আমাদের মাঝে নেই, আমরা তাঁদের গভীর শ্রদ্ধা ও কৃতজ্ঞতার সঙ্গে স্মরণ করছি।
+                              </p>
+                              <div className="bg-amber-400/10 border border-amber-400/20 rounded-lg p-2.5">
+                                <p className="text-[10px] text-amber-300 font-bold leading-relaxed">
+                                  আল্লাহ তাআলা তাঁদের সকল ভুল-ত্রুটি ক্ষমা করে দিন, কবরকে নূরে পরিপূর্ণ করুন এবং তাঁদেরকে জান্নাতুল ফেরদাউসের সম্মানিত মেহমান হিসেবে কবুল করুন। <span className="text-emerald-300">আমীন।</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
                         </form>
                       </div>
                     </div>
@@ -2725,99 +2853,201 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                     </div>
                   )}
 
-                  {/* Popup Modal 4: Edit Memorial Figure */}
+                  {/* Popup Modal 4: Edit Memorial Figure — Single-Column Inline Layout */}
                   {editingMemorial && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-                      <div className={`w-full max-w-lg rounded-3xl border-t-4 border-emerald-500 p-6 md:p-8 shadow-2xl relative ${
-                        isDarkMode ? 'bg-[#031a10] border-emerald-900/50 text-white' : 'bg-white border-gray-200 text-slate-900'
+                    <div className="fixed inset-0 z-50 flex items-start justify-center pt-4 pb-4 px-3 sm:px-4 bg-black/75 backdrop-blur-sm animate-fade-in overflow-y-auto">
+                      <div className={`w-full max-w-xl rounded-3xl border-t-4 border-emerald-500 shadow-2xl relative my-4 p-5 md:p-6 ${
+                        isDarkMode ? 'bg-[#031a10] text-white' : 'bg-white text-slate-900'
                       }`}>
-                        <button 
-                          onClick={() => setEditingMemorial(null)}
-                          className="absolute top-4 right-4 p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                        >
-                          <X className="h-5 w-5" />
-                        </button>
-                        <h3 className="text-lg font-black text-emerald-400 mb-6 flex items-center gap-2">
-                          <BookOpen className="h-5 w-5" />
-                          <span>স্মরণীয় ব্যক্তিত্ব সম্পাদন করুন</span>
-                        </h3>
-                        <form onSubmit={handleEditMemorialSubmit} className="space-y-4 text-left">
+
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between pb-4 border-b border-emerald-900/30 mb-4">
+                          <h3 className="text-base font-black text-emerald-400 flex items-center gap-2">
+                            <BookOpen className="h-5 w-5 shrink-0" />
+                            <span>স্মরণীয় ব্যক্তিত্ব সম্পাদন করুন</span>
+                          </h3>
+                          <button
+                            onClick={() => setEditingMemorial(null)}
+                            className="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                          >
+                            <X className="h-5 w-5" />
+                          </button>
+                        </div>
+
+                        {/* Form Body */}
+                        <form onSubmit={handleEditMemorialSubmit} className="space-y-3.5 text-left">
                           <div>
-                            <label className="block text-xs font-bold text-emerald-455 mb-1">স্মরণীয় ব্যক্তির নাম *</label>
-                            <input 
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">স্মরণীয় ব্যক্তির নাম *</label>
+                            <input
                               type="text"
                               required
                               value={editingMemorial.member_name}
                               onChange={(e) => setEditingMemorial({...editingMemorial, member_name: e.target.value})}
                               placeholder="মরহুম আলহাজ্ব নূর উদ্দিন আহমেদ"
-                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 transition-colors ${
                                 isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-emerald-455 mb-1">জন্ম-মৃত্যু সাল (জীবনকাল) *</label>
-                            <input 
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">জন্ম-মৃত্যু সাল (জীবনকাল) *</label>
+                            <input
                               type="text"
                               required
                               value={editingMemorial.lifespan}
                               onChange={(e) => setEditingMemorial({...editingMemorial, lifespan: e.target.value})}
                               placeholder="উদা: ১৯৩০ - ২০০৮"
-                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900 font-sans'
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 transition-colors ${
+                                isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান হেডলাইন *</label>
-                            <input 
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">অবদান হেডলাইন * <span className="text-gray-500 font-normal">(সর্বোচ্চ ২৫ অক্ষর)</span></label>
+                            <input
                               type="text"
                               required
                               maxLength={25}
                               value={editingMemorial.contribution_headline}
                               onChange={(e) => setEditingMemorial({...editingMemorial, contribution_headline: e.target.value})}
                               placeholder="অবদান হেডলাইন লিখুন"
-                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 transition-colors ${
                                 isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             />
-                            <div className="flex justify-between items-center mt-1 px-1">
-                              <span className="text-[10px] text-gray-500">সর্বোচ্চ ২৫ অক্ষর</span>
+                            <div className="flex justify-end mt-0.5 pr-1">
                               <span className={`text-[10px] font-bold ${
                                 editingMemorial.contribution_headline.length >= 25 ? 'text-rose-500' : 'text-emerald-400'
                               }`}>
-                                {editingMemorial.contribution_headline.length}/25 অক্ষর
+                                {editingMemorial.contribution_headline.length}/25
                               </span>
                             </div>
                           </div>
                           <div>
-                            <label className="block text-xs font-bold text-emerald-455 mb-1">অবদান বিস্তারিত *</label>
-                            <textarea 
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">অবদান বিস্তারিত *</label>
+                            <textarea
                               required
-                              rows="4"
+                              rows="3"
                               value={editingMemorial.contribution_details}
                               onChange={(e) => setEditingMemorial({...editingMemorial, contribution_details: e.target.value})}
                               placeholder="অবদান বিস্তারিত লিখুন"
-                              className={`w-full border-[#02100a] border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                              className={`w-full border rounded-xl py-2.5 px-3.5 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 transition-colors ${
                                 isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-300 text-slate-900'
                               }`}
                             ></textarea>
                           </div>
+
+                          {/* Optional Image Upload & Current Image Preview */}
+                          <div>
+                            <label className="block text-xs font-bold text-emerald-400 mb-1">
+                              নতুন ছবি আপলোড করুন <span className="text-gray-500 font-normal">(ঐচ্ছিক)</span>
+                            </label>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) setSelectedEditMemorialFile(f);
+                              }}
+                              className={`w-full border rounded-xl py-2 px-3 text-xs focus:outline-none ${
+                                isDarkMode
+                                  ? 'bg-[#02100a] border-emerald-800/60 text-gray-300 file:bg-emerald-900/70 file:text-emerald-300 file:border-0 file:rounded-lg file:px-3 file:py-1 file:mr-2 file:cursor-pointer file:text-xs'
+                                  : 'bg-slate-50 border-gray-300 text-slate-700'
+                              }`}
+                            />
+                            
+                            {selectedEditMemorialFile ? (
+                              <div className="mt-2 flex items-center gap-2.5 bg-emerald-900/20 rounded-xl p-2 border border-emerald-800/30">
+                                <img
+                                  src={URL.createObjectURL(selectedEditMemorialFile)}
+                                  alt="new preview"
+                                  className="w-12 h-12 object-cover rounded-lg border border-amber-400/40 shrink-0"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-[10px] text-amber-400 font-bold">নতুন ছবি (আপলোড হবে)</p>
+                                  <p className="text-[9px] text-gray-400 truncate">{selectedEditMemorialFile.name}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedEditMemorialFile(null)}
+                                  className="ml-auto p-1 rounded-full hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer shrink-0"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ) : editingMemorial.image_url ? (
+                              <div className="mt-2 flex items-center gap-2.5 bg-emerald-900/20 rounded-xl p-2 border border-emerald-800/30">
+                                <img
+                                  src={editingMemorial.image_url}
+                                  alt="current preview"
+                                  className="w-12 h-12 object-cover rounded-lg border border-amber-400/40 shrink-0"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-[10px] text-emerald-400 font-bold">বিদ্যমান ছবি</p>
+                                  <p className="text-[9px] text-gray-400 truncate">ডাটাবেসে সংরক্ষিত</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingMemorial({ ...editingMemorial, image_url: '' })}
+                                  className="ml-auto p-1 rounded-full hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer shrink-0"
+                                  title="ছবি মুছে ফেলুন"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+
                           <div className="flex gap-4 mt-6">
-                            <button 
+                            <button
                               type="button"
                               onClick={() => setEditingMemorial(null)}
-                              className="flex-1 py-3 border border-emerald-800/60 hover:bg-emerald-950/20 text-emerald-300 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all cursor-pointer"
+                              className={`flex-1 py-3 border font-black text-xs sm:text-sm rounded-xl transition-all cursor-pointer ${
+                                isDarkMode
+                                  ? 'border-emerald-800/60 hover:bg-emerald-950/20 text-emerald-300'
+                                  : 'border-gray-300 hover:bg-slate-50 text-slate-700'
+                              }`}
                             >
                               বাতিল
                             </button>
-                            <button 
+                            <button
                               type="submit"
-                              className="flex-1 py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-md cursor-pointer"
+                              disabled={isMemorialUploading}
+                              className={`flex-2 py-3 font-black text-xs sm:text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer ${
+                                isMemorialUploading
+                                  ? 'bg-amber-500/50 text-slate-950/60 cursor-not-allowed'
+                                  : 'bg-amber-500 hover:bg-amber-600 text-slate-950 active:scale-95'
+                              }`}
                             >
-                              আপডেট নিশ্চিত করুন
+                              {isMemorialUploading ? (
+                                <><Loader2 className="h-4 w-4 animate-spin" /><span>📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।</span></>
+                              ) : (
+                                <span>পরিবর্তন সংরক্ষণ করুন</span>
+                              )}
                             </button>
                           </div>
+
+                          {/* Islamic Prayer Banner - Inline under actions */}
+                          <div className="bg-gradient-to-br from-[#022e1b] via-[#032d1a] to-[#043d25] border border-amber-400/25 rounded-2xl p-4 text-center relative overflow-hidden mt-4">
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-amber-400/5 rounded-full blur-2xl pointer-events-none" />
+                            <div className="absolute inset-1 border border-amber-400/10 rounded-xl pointer-events-none" />
+                            <div className="relative z-10 space-y-2.5">
+                              <div className="text-3xl leading-none">🕌</div>
+                              <div className="text-2xl text-amber-400/70 font-serif leading-none">﷽</div>
+                              <h4 className="text-xs font-black text-amber-300 tracking-wider uppercase border-b border-amber-400/20 pb-1.5">
+                                স্মরণ ও শ্রদ্ধাঞ্জলি
+                              </h4>
+                              <p className="text-[11px] leading-[1.9] font-semibold text-amber-100/85 text-justify">
+                                যারা এই মাদ্রাসার প্রতিষ্ঠা, উন্নয়ন ও পরিচালনায় অসামান্য অবদান রেখে আজ আমাদের মাঝে নেই, আমরা তাঁদের গভীর শ্রদ্ধা ও কৃতজ্ঞতার সঙ্গে স্মরণ করছি।
+                              </p>
+                              <div className="bg-amber-400/10 border border-amber-400/20 rounded-lg p-2.5">
+                                <p className="text-[10px] text-amber-300 font-bold leading-relaxed">
+                                  আল্লাহ তাআলা তাঁদের সকল ভুল-ত্রুটি ক্ষমা করে দিন, কবরকে নূরে পরিপূর্ণ করুন এবং তাঁদেরকে জান্নাতুল ফেরদাউসের সম্মানিত মেহমান হিসেবে কবুল করুন। <span className="text-emerald-300">আমীন।</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
                         </form>
                       </div>
                     </div>
@@ -2826,11 +3056,619 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                 </div>
               )}
 
+              {activeTab === 'online_admissions' && (
+                <div className="space-y-8 animate-fade-in">
+                  <OnlineAdmissionsTab 
+                    isDarkMode={isDarkMode} 
+                    triggerToast={triggerToast} 
+                  />
+                </div>
+              )}
+
             </div>
           )}
         </div>
 
       </main>
+
+    </div>
+  );
+}
+
+// ==========================================================
+// Tab Component: Online Admissions Management
+// ==========================================================
+function OnlineAdmissionsTab({ isDarkMode, triggerToast }) {
+  const [admissions, setAdmissions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Modals States
+  const [selectedAdmission, setSelectedAdmission] = useState(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showAcceptForm, setShowAcceptForm] = useState(false);
+  const [showRejectForm, setShowRejectForm] = useState(false);
+
+  // Form Inputs
+  const [studentId, setStudentId] = useState('');
+  const [password, setPassword] = useState('');
+  const [rollNo, setRollNo] = useState('');
+  const [rejectionReason, setRejectionReason] = useState('');
+
+  const fetchPendingAdmissions = async () => {
+    setLoading(true);
+    try {
+      const q = query(
+        collection(db, "admissions"),
+        where("status", "==", "pending")
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      list.sort((a, b) => {
+        const t1 = a.applied_at?.toDate()?.getTime() || 0;
+        const t2 = b.applied_at?.toDate()?.getTime() || 0;
+        return t2 - t1;
+      });
+      setAdmissions(list);
+    } catch (err) {
+      console.error("Fetch pending admissions error:", err);
+      triggerToast("আবেদন তালিকা লোড করতে সমস্যা হয়েছে।", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPendingAdmissions();
+  }, []);
+
+  const checkRollDuplicate = async (cls, rollVal) => {
+    const q1 = query(
+      collection(db, "admissions"),
+      where("class", "==", cls),
+      where("status", "==", "accepted"),
+      where("roll_no", "==", parseInt(rollVal, 10))
+    );
+    const q2 = query(
+      collection(db, "admissions"),
+      where("class", "==", cls),
+      where("status", "==", "accepted"),
+      where("roll_no", "==", rollVal.trim())
+    );
+    const q3 = query(
+      collection(db, "admissions"),
+      where("class", "==", cls),
+      where("status", "==", "accepted"),
+      where("roll", "==", rollVal.trim())
+    );
+    const q4 = query(
+      collection(db, "admissions"),
+      where("class", "==", cls),
+      where("status", "==", "accepted"),
+      where("roll", "==", parseInt(rollVal, 10))
+    );
+
+    const [s1, s2, s3, s4] = await Promise.all([
+      getDocs(q1), getDocs(q2), getDocs(q3), getDocs(q4)
+    ]);
+    return !s1.empty || !s2.empty || !s3.empty || !s4.empty;
+  };
+
+  const handleAcceptSubmit = async (e) => {
+    e.preventDefault();
+    if (!studentId.trim() || !password.trim() || !rollNo.trim()) {
+      alert("সকল ক্ষেত্র পূরণ করুন।");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const isDuplicate = await checkRollDuplicate(selectedAdmission.class, rollNo);
+      if (isDuplicate) {
+        alert("এই ক্লাসে এই রোলটি ইতিমধ্যে ব্যবহার করা হয়েছে, অন্য রোল দিন");
+        setActionLoading(false);
+        return;
+      }
+
+      const docRef = doc(db, "admissions", selectedAdmission.id);
+      await updateDoc(docRef, {
+        status: "accepted",
+        student_id: studentId.trim(),
+        password: password.trim(),
+        roll: rollNo.trim(),
+        roll_no: rollNo.trim()
+      });
+
+      triggerToast("ভর্তি আবেদন সফলভাবে অনুমোদিত হয়েছে!", "success");
+      
+      // Reset & Close
+      setShowAcceptForm(false);
+      setShowDetailsModal(false);
+      setSelectedAdmission(null);
+      setStudentId('');
+      setPassword('');
+      setRollNo('');
+      fetchPendingAdmissions();
+    } catch (err) {
+      console.error("Accept error:", err);
+      alert("আবেদন অনুমোদন করতে সমস্যা হয়েছে। কারণ: " + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRejectSubmit = async (e) => {
+    e.preventDefault();
+    if (!rejectionReason.trim()) {
+      alert("বাতিল করার কারণ লিখুন।");
+      return;
+    }
+    if (rejectionReason.length > 50) {
+      alert("বাতিলের কারণ সর্বোচ্চ ৫০ অক্ষরের হতে হবে।");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const docRef = doc(db, "admissions", selectedAdmission.id);
+      await updateDoc(docRef, {
+        status: "rejected",
+        rejection_reason: rejectionReason.trim()
+      });
+
+      triggerToast("আবেদন বাতিল করা হয়েছে।", "success");
+      
+      // Reset & Close
+      setShowRejectForm(false);
+      setShowDetailsModal(false);
+      setSelectedAdmission(null);
+      setRejectionReason('');
+      fetchPendingAdmissions();
+    } catch (err) {
+      console.error("Reject error:", err);
+      alert("আবেদন বাতিল করতে সমস্যা হয়েছে। কারণ: " + err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleOpenDetails = (admission) => {
+    setSelectedAdmission(admission);
+    setShowDetailsModal(true);
+    setShowAcceptForm(false);
+    setShowRejectForm(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      
+      {/* Tab Banner */}
+      <div className={`bg-gradient-to-r border rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden ${
+        isDarkMode ? 'from-[#032416] via-[#09472e] to-[#032416] border-emerald-500/20' : 'from-emerald-800 to-emerald-950 border-gray-200 text-white'
+      }`}>
+        <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="space-y-2 z-10 relative">
+          <span className="bg-amber-500/10 text-amber-300 text-[10px] font-black uppercase tracking-wider py-1 px-3.5 rounded-full border border-amber-500/25">
+            Admission Officer Panel
+          </span>
+          <h2 className="text-xl md:text-2xl font-black text-white leading-tight">
+            অনলাইন ভর্তি আবেদন পর্যালোচনা
+          </h2>
+          <p className="text-xs text-emerald-250 leading-relaxed font-semibold max-w-xl">
+            মাদ্রাসার অনলাইন ভর্তি কার্যক্রমের পেন্ডিং আবেদনসমূহ পর্যালোচনা করুন। আবেদনসমূহ পরীক্ষা করে অনুমোদন (Accept) অথবা বাতিল (Reject) করুন।
+          </p>
+        </div>
+      </div>
+
+      {/* Main List Box */}
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20 bg-white/5 border border-emerald-900/10 rounded-3xl">
+          <Loader2 className="h-10 w-10 animate-spin text-amber-500" />
+          <p className="text-xs text-amber-400 mt-3 font-semibold font-serif tracking-wide">
+            📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।
+          </p>
+        </div>
+      ) : admissions.length === 0 ? (
+        <div className={`border rounded-3xl p-12 text-center space-y-3 shadow-md ${
+          isDarkMode ? 'bg-[#031a10] border-emerald-950/40 text-emerald-300' : 'bg-white border-gray-200 text-slate-500'
+        }`}>
+          <FileText className="h-12 w-12 mx-auto text-amber-500/60" />
+          <h4 className="text-sm sm:text-base font-black">কোনো পেন্ডিং আবেদন পাওয়া যায়নি</h4>
+          <p className="text-[10px] sm:text-xs">ভর্তি আবেদনকারী শিক্ষার্থী সফলভাবে ফর্ম সাবমিট করলে এখানে তালিকা দেখতে পাবেন।</p>
+        </div>
+      ) : (
+        <div className={`border rounded-3xl overflow-hidden shadow-xl ${
+          isDarkMode ? 'bg-[#031a10] border-emerald-950/40' : 'bg-white border-gray-200'
+        }`}>
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className={`border-b text-xs uppercase tracking-wider font-bold ${
+                  isDarkMode ? 'bg-emerald-950/40 border-emerald-900/35 text-emerald-450' : 'bg-slate-50 border-gray-150 text-slate-655'
+                }`}>
+                  <th className="py-4 px-5">শিক্ষার্থীর নাম (বাংলা)</th>
+                  <th className="py-4 px-5">শ্রেণী</th>
+                  <th className="py-4 px-5">ফোন নাম্বার</th>
+                  <th className="py-4 px-5">আবেদনের তারিখ</th>
+                  <th className="py-4 px-5 text-center">কার্যক্রম</th>
+                </tr>
+              </thead>
+              <tbody className={`text-xs sm:text-sm font-semibold divide-y ${
+                isDarkMode ? 'divide-emerald-950/30' : 'divide-gray-100'
+              }`}>
+                {admissions.map((item) => (
+                  <tr key={item.id} className={`transition-colors hover:bg-white/5`}>
+                    <td className="py-3.5 px-5 font-bold text-amber-400/90">{item.student_name_bn}</td>
+                    <td className="py-3.5 px-5">
+                      <span className="bg-emerald-150/15 border border-emerald-500/20 text-emerald-400 font-bold px-2.5 py-0.5 rounded-full text-[10px]">
+                        {item.class}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-5 font-sans">{item.applicant_phone}</td>
+                    <td className="py-3.5 px-5 font-sans">
+                      {item.applied_at?.toDate()?.toLocaleDateString('bn-BD', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      }) || '---'}
+                    </td>
+                    <td className="py-3.5 px-5 text-center">
+                      <button
+                        onClick={() => handleOpenDetails(item)}
+                        className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center gap-1 mx-auto"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        <span>বিস্তারিত</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1: Admission Details View (Read-Only) */}
+      {showDetailsModal && selectedAdmission && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto animate-fade-in">
+          
+          {/* Action Loading overlay */}
+          {actionLoading && (
+            <div className="absolute inset-0 bg-[#020e09]/90 z-[70] flex flex-col items-center justify-center space-y-4 rounded-3xl">
+              <Loader2 className="h-10 w-10 animate-spin text-amber-500" />
+              <p className="text-xs text-amber-400 mt-3 font-semibold font-serif tracking-wide">
+                📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।
+              </p>
+            </div>
+          )}
+
+          <div className={`w-full max-w-3xl rounded-3xl border-t-4 border-amber-500 shadow-2xl relative my-4 p-5 md:p-6 max-h-[90vh] overflow-y-auto ${
+            isDarkMode ? 'bg-[#031a10] border-emerald-950 text-white' : 'bg-white text-slate-800'
+          }`}>
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-emerald-900/20 mb-5">
+              <div className="min-w-0">
+                <p className="text-[10px] text-emerald-400 font-bold uppercase">ভর্তি আবেদনকারী প্রোফাইল</p>
+                <h3 className="text-base sm:text-lg font-black text-white truncate">{selectedAdmission.student_name_bn}</h3>
+              </div>
+              <button
+                onClick={() => {
+                  if (!actionLoading) {
+                    setShowDetailsModal(false);
+                    setSelectedAdmission(null);
+                  }
+                }}
+                className="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer shrink-0"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Read-Only Form Details */}
+            <div className="space-y-6 text-left">
+              
+              {/* SECTION 1: Student Details */}
+              <div className={`p-4 rounded-2xl border ${
+                isDarkMode ? 'bg-[#02100a] border-emerald-950/60' : 'bg-slate-50 border-gray-200'
+              }`}>
+                <h4 className="text-xs sm:text-sm font-black text-amber-300 flex items-center gap-1.5 border-b border-emerald-900/10 pb-2 mb-3">
+                  <User className="h-4 w-4" />
+                  <span>শিক্ষার্থীর তথ্য</span>
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">পূর্ণ নাম (বাংলা):</span>
+                    <span className="font-semibold text-white">{selectedAdmission.student_name_bn}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">পূর্ণ নাম (ইংরেজি):</span>
+                    <span className="font-semibold text-white uppercase">{selectedAdmission.student_name_en}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">লিঙ্গ:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.gender === 'Male' ? 'পুরুষ' : selectedAdmission.gender === 'Female' ? 'মহিলা' : 'অন্যান্য'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">আবেদনকারীর ফোন:</span>
+                    <span className="font-semibold text-white font-sans">{selectedAdmission.applicant_phone}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">ইমেইল:</span>
+                    <span className="font-semibold text-white font-sans">{selectedAdmission.email || 'নেই'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">জন্ম নিবন্ধন / এনআইডি নম্বর:</span>
+                    <span className="font-semibold text-white font-sans">{selectedAdmission.birth_nid_no}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">জন্মসাল:</span>
+                    <span className="font-semibold text-white font-sans">{selectedAdmission.birth_year}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">রক্তের গ্রুপ:</span>
+                    <span className="font-semibold text-rose-400 font-sans">{selectedAdmission.blood_group || 'নেই'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">আবেদনকৃত শ্রেণী:</span>
+                    <span className="inline-block bg-emerald-950 border border-emerald-700/30 text-emerald-400 font-bold px-2 py-0.5 rounded text-[10px] mt-0.5">
+                      {selectedAdmission.class}
+                    </span>
+                  </div>
+                  <div className="hidden sm:block"></div>
+                  
+                  <div className="sm:col-span-2">
+                    <span className="text-gray-450 block text-[10px] font-bold">বর্তমান ঠিকানা:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.present_address}</span>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-gray-450 block text-[10px] font-bold">স্থায়ী ঠিকানা:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.permanent_address}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 2: Guardian Details */}
+              <div className={`p-4 rounded-2xl border ${
+                isDarkMode ? 'bg-[#02100a] border-emerald-950/60' : 'bg-slate-50 border-gray-200'
+              }`}>
+                <h4 className="text-xs sm:text-sm font-black text-amber-300 flex items-center gap-1.5 border-b border-emerald-900/10 pb-2 mb-3">
+                  <ShieldCheck className="h-4 w-4" />
+                  <span>অভিভাবকের তথ্য</span>
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">পিতার নাম:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.father_name}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">মাতার নাম:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.mother_name}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">পিতার ফোন নম্বর:</span>
+                    <span className="font-semibold text-white font-sans">{selectedAdmission.father_phone}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">অভিভাবকের ইমেইল:</span>
+                    <span className="font-semibold text-white font-sans">{selectedAdmission.parent_email || 'নেই'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">পিতার এনআইডি:</span>
+                    <span className="font-semibold text-white font-sans">{selectedAdmission.father_nid}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">মাতার এনআইডি:</span>
+                    <span className="font-semibold text-white font-sans">{selectedAdmission.mother_nid}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">পিতার পেশা:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.father_occupation}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">মাতার পেশা:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.mother_occupation}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">থানা:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.upazila_thana}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-450 block text-[10px] font-bold">জেলা:</span>
+                    <span className="font-semibold text-white">{selectedAdmission.district}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 3: Conditional Academic details (Grades 6-9) */}
+              {selectedAdmission.prev_school_name && (
+                <div className={`p-4 rounded-2xl border ${
+                  isDarkMode ? 'bg-[#02100a] border-emerald-950/60' : 'bg-slate-50 border-gray-200'
+                }`}>
+                  <h4 className="text-xs sm:text-sm font-black text-amber-300 flex items-center gap-1.5 border-b border-emerald-900/10 pb-2 mb-3">
+                    <Award className="h-4 w-4" />
+                    <span>পূর্ববর্তী শিক্ষাগত বিবরণী</span>
+                  </h4>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
+                    <div>
+                      <span className="text-gray-450 block text-[10px] font-bold">পূর্ববর্তী শিক্ষা প্রতিষ্ঠান:</span>
+                      <span className="font-semibold text-white">{selectedAdmission.prev_school_name}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-450 block text-[10px] font-bold">সর্বশেষ পাসকৃত শ্রেণি:</span>
+                      <span className="font-semibold text-white">{selectedAdmission.prev_class}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-450 block text-[10px] font-bold">রোল নম্বর:</span>
+                      <span className="font-semibold text-white font-sans">{selectedAdmission.prev_roll || 'নেই'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-450 block text-[10px] font-bold">ফলাফল / GPA:</span>
+                      <span className="font-semibold text-white font-sans">{selectedAdmission.prev_gpa}</span>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <span className="text-gray-450 block text-[10px] font-bold">প্রতিষ্ঠান ত্যাগ করার কারণ:</span>
+                      <span className="font-semibold text-white">{selectedAdmission.exit_reason}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Accept & Reject Action Forms Inline Container */}
+            <div className="mt-6 space-y-4 pt-4 border-t border-emerald-900/20">
+              
+              {/* ACCEPT FORM SUB-PANEL */}
+              {showAcceptForm ? (
+                <form onSubmit={handleAcceptSubmit} className="bg-emerald-950/40 border border-emerald-500/25 rounded-2xl p-4 space-y-4 animate-fade-in text-left">
+                  <h4 className="text-xs sm:text-sm font-black text-emerald-400">ভর্তি আবেদন অনুমোদন ফর্ম</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 mb-1">আইডি নম্বর *</label>
+                      <input 
+                        type="text" 
+                        required
+                        value={studentId}
+                        onChange={(e) => setStudentId(e.target.value)}
+                        placeholder="উদা: 1003"
+                        className="w-full bg-[#02100a] border border-emerald-800/60 rounded-xl py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 mb-1">পাসওয়ার্ড *</label>
+                      <input 
+                        type="text" 
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="পাসওয়ার্ড লিখুন"
+                        className="w-full bg-[#02100a] border border-emerald-800/60 rounded-xl py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 mb-1">রোল নম্বর *</label>
+                      <input 
+                        type="text" 
+                        required
+                        value={rollNo}
+                        onChange={(e) => setRollNo(e.target.value)}
+                        placeholder="উদা: ১"
+                        className="w-full bg-[#02100a] border border-emerald-800/60 rounded-xl py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAcceptForm(false)}
+                      className="px-4 py-2 border border-emerald-800/40 hover:bg-emerald-950/20 text-emerald-300 font-bold text-xs rounded-xl active:scale-95 transition-all cursor-pointer"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={actionLoading}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      <span>অনুমোদন সম্পন্ন করুন</span>
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {/* REJECT FORM SUB-PANEL */}
+              {showRejectForm ? (
+                <form onSubmit={handleRejectSubmit} className="bg-rose-950/30 border border-rose-500/25 rounded-2xl p-4 space-y-4 animate-fade-in text-left">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-xs sm:text-sm font-black text-rose-455">ভর্তি আবেদন বাতিল ফর্ম</h4>
+                    <span className="text-[10px] text-gray-400 font-sans">{rejectionReason.length}/50</span>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 mb-1">আবেদন বাতিল করার কারণ *</label>
+                    <input 
+                      type="text" 
+                      required
+                      maxLength={50}
+                      value={rejectionReason}
+                      onChange={(e) => setRejectionReason(e.target.value)}
+                      placeholder="উদা: ভুল মোবাইল নাম্বার বা ত্রুটিপূর্ণ কাগজপত্র।"
+                      className="w-full bg-[#02100a] border border-emerald-800/60 rounded-xl py-2 px-3.5 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400 text-white"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowRejectForm(false)}
+                      className="px-4 py-2 border border-emerald-800/40 hover:bg-emerald-950/20 text-emerald-300 font-bold text-xs rounded-xl active:scale-95 transition-all cursor-pointer"
+                    >
+                      বাতিল
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={actionLoading}
+                      className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl shadow active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      <span>বাতিল সম্পন্ন করুন</span>
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {/* PRIMARY DECISION ACTIONS */}
+              {!showAcceptForm && !showRejectForm && (
+                <div className="flex flex-col sm:flex-row justify-end items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRejectionReason('');
+                      setShowRejectForm(true);
+                      setShowAcceptForm(false);
+                    }}
+                    className="w-full sm:w-auto px-5 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                  >
+                    আবেদন বাতিল করুন
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStudentId('');
+                      setPassword('');
+                      setRollNo('');
+                      setShowAcceptForm(true);
+                      setShowRejectForm(false);
+                    }}
+                    className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                  >
+                    আবেদন গ্রহণ করুন
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDetailsModal(false);
+                      setSelectedAdmission(null);
+                    }}
+                    className={`w-full sm:w-auto px-5 py-2.5 border font-bold text-xs sm:text-sm rounded-xl transition-all cursor-pointer ${
+                      isDarkMode 
+                        ? 'border-emerald-800/60 hover:bg-emerald-950/20 text-emerald-300' 
+                        : 'border-gray-300 hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    বন্ধ করুন
+                  </button>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );
