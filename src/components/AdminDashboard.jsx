@@ -3172,10 +3172,10 @@ function OnlineAdmissionsTab({ isDarkMode, triggerToast }) {
       const docRef = doc(db, "admissions", selectedAdmission.id);
       await updateDoc(docRef, {
         status: "accepted",
-        student_id: studentId.trim(),
-        password: password.trim(),
-        roll: rollNo.trim(),
-        roll_no: rollNo.trim()
+        student_id: String(studentId).trim(),
+        password: String(password).trim(),
+        roll: String(rollNo).trim(),
+        roll_no: String(rollNo).trim()
       });
 
       triggerToast("ভর্তি আবেদন সফলভাবে অনুমোদিত হয়েছে!", "success");
