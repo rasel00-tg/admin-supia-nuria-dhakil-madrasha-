@@ -43,6 +43,53 @@ import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 
 const auth = getAuth();
 
+const getPasswordStrengthInfo = (pwd) => {
+  if (!pwd) return { percent: 0, text: "", colorClass: "" };
+  
+  let hasLetter = false;
+  let hasNumber = false;
+  let hasUpper = false;
+  let hasLower = false;
+  let hasSpecial = false;
+
+  for (let i = 0; i < pwd.length; i++) {
+    const char = pwd[i];
+    if (char >= '0' && char <= '9') {
+      hasNumber = true;
+    } else if (char >= 'a' && char <= 'z') {
+      hasLower = true;
+      hasLetter = true;
+    } else if (char >= 'A' && char <= 'Z') {
+      hasUpper = true;
+      hasLetter = true;
+    } else if (['@', '#', '$', '%'].includes(char)) {
+      hasSpecial = true;
+    }
+  }
+
+  if (pwd.length >= 6 && hasUpper && hasLower && hasNumber && hasSpecial) {
+    return {
+      percent: 100,
+      text: "অত্যন্ত শক্তিশালী পাসওয়ার্ড (১০০%)",
+      colorClass: "bg-emerald-500 text-emerald-400"
+    };
+  }
+
+  if (pwd.length >= 6 && hasLetter && hasNumber) {
+    return {
+      percent: 60,
+      text: "মাঝারি পাসওয়ার্ড (৬০%)",
+      colorClass: "bg-amber-500 text-amber-400"
+    };
+  }
+
+  return {
+    percent: 30,
+    text: "দুর্বল পাসওয়ার্ড (৩০%)",
+    colorClass: "bg-rose-500 text-rose-500"
+  };
+};
+
 export default function AdminDashboard({ adminUser, onLogout }) {
   const [activeTab, setActiveTab] = useState('home');
   const [loading, setLoading] = useState(true);
@@ -134,6 +181,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
   const [isTeacherUploading, setIsTeacherUploading] = useState(false);
   const [teacherUploadingMsg, setTeacherUploadingMsg] = useState('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।');
   const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
+  const [loginType, setLoginType] = useState('email');
 
   // 3. User Form (Settings)
   const [userForm, setUserForm] = useState({
@@ -575,6 +623,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       login_password: ''
     });
     setEditingTeacherId(null);
+    setLoginType('email');
   };
 
   // Handle Teacher Submit (Add or Edit)
@@ -583,6 +632,26 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     if (!teacherForm.name_bn.trim() || !teacherForm.designation.trim() || !teacherForm.mobile.trim()) {
       triggerToast('শিক্ষকের নাম (বাংলা), পদবী এবং মোবাইল নম্বর পূরণ করা আবশ্যক।', 'error');
       return;
+    }
+
+    // Dynamic Login ID Validation (Email / Phone Detection)
+    const loginUsername = teacherForm.login_username.trim();
+    if (!loginUsername) {
+      alert("❌ লগইন আইডি (মোবাইল নম্বর বা ইমেইল) পূরণ করা আবশ্যক।");
+      return;
+    }
+
+    if (loginType === 'mobile') {
+      const isAllDigits = /^\d+$/.test(loginUsername);
+      if (!isAllDigits || !loginUsername.startsWith('01') || loginUsername.length !== 11) {
+        alert("❌ ভুল লগইন আইডি ফরম্যাট!\nমোবাইল নম্বরটি অবশ্যই '01' দিয়ে শুরু এবং ১১ ডিজিটের হতে হবে।");
+        return;
+      }
+    } else {
+      if (!loginUsername.includes('@') || !loginUsername.endsWith('.com')) {
+        alert("❌ ভুল লগইন আইডি ফরম্যাট!\nইমেইল অ্যাড্রেসের শেষে কঠোরভাবে '.com' এবং মাঝে '@' যুক্ত থাকতে হবে।");
+        return;
+      }
     }
 
     setIsTeacherUploading(true);
@@ -827,6 +896,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       login_password: tea.login_password || ''
     });
     setEditingTeacherId(tea.id);
+    setLoginType(tea.login_username && tea.login_username.includes('@') ? 'email' : 'mobile');
     setActiveTeacherSubTab('add');
   };
 
@@ -2764,6 +2834,34 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                             <span>সেকশন ৭: অ্যাকাউন্ট লগইন তথ্য (Account Login Credentials)</span>
                           </h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                            <div className="md:col-span-2">
+                              <label className="block text-xs font-semibold text-emerald-400 mb-2">লগইন আইডির ধরন (Login ID Type) *</label>
+                              <div className="flex items-center gap-6">
+                                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-emerald-400">
+                                  <input 
+                                    type="radio" 
+                                    name="loginType" 
+                                    value="email" 
+                                    checked={loginType === 'email'} 
+                                    onChange={() => setLoginType('email')} 
+                                    className="w-4 h-4 accent-amber-500 bg-[#02100a] border-emerald-800"
+                                  />
+                                  <span>ইমেইল (Email)</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-emerald-400">
+                                  <input 
+                                    type="radio" 
+                                    name="loginType" 
+                                    value="mobile" 
+                                    checked={loginType === 'mobile'} 
+                                    onChange={() => setLoginType('mobile')} 
+                                    className="w-4 h-4 accent-amber-500 bg-[#02100a] border-emerald-800"
+                                  />
+                                  <span>মোবাইল নম্বর (Mobile Number)</span>
+                                </label>
+                              </div>
+                            </div>
+
                             <div>
                               <label className="block text-xs font-semibold text-emerald-400 mb-1">লগইন অ্যাকাউন্ট নম্বর বা ইমেইল *</label>
                               <input
@@ -2774,7 +2872,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                                 className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
                                   isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
                                 }`}
-                                placeholder="এখানে শিক্ষকের মোবাইল নম্বর বা ইমেইল লিখুন"
+                                placeholder={loginType === 'email' ? "এখানে শিক্ষকের ইমেইল দিন" : "১১ ডিজিটের নম্বরটি লিখুন"}
                               />
                             </div>
 
@@ -2790,13 +2888,25 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                                 placeholder="লগইন করার জন্য একটি স্ট্রং পাসওয়ার্ড সেট করুন"
                               />
                               {teacherForm.login_password && (
-                                <p className={`text-xs font-bold mt-1.5 ${
-                                  getPasswordStrength(teacherForm.login_password).includes('🔴') ? 'text-rose-500' :
-                                  getPasswordStrength(teacherForm.login_password).includes('🟡') ? 'text-amber-500' :
-                                  'text-emerald-400'
-                                }`}>
-                                  {getPasswordStrength(teacherForm.login_password)}
-                                </p>
+                                <div className="mt-2 space-y-1">
+                                  <div className="w-full bg-slate-800/40 rounded-full h-1.5 overflow-hidden">
+                                    <div 
+                                      className={`h-full transition-all duration-300 ${
+                                        getPasswordStrengthInfo(teacherForm.login_password).percent === 30 ? 'bg-rose-500' :
+                                        getPasswordStrengthInfo(teacherForm.login_password).percent === 60 ? 'bg-amber-500' :
+                                        'bg-emerald-500'
+                                      }`}
+                                      style={{ width: `${getPasswordStrengthInfo(teacherForm.login_password).percent}%` }}
+                                    />
+                                  </div>
+                                  <p className={`text-xs font-bold ${
+                                    getPasswordStrengthInfo(teacherForm.login_password).percent === 30 ? 'text-rose-500' :
+                                    getPasswordStrengthInfo(teacherForm.login_password).percent === 60 ? 'text-amber-500' :
+                                    'text-emerald-400'
+                                  }`}>
+                                    {getPasswordStrengthInfo(teacherForm.login_password).percent === 30 ? '🔴' : getPasswordStrengthInfo(teacherForm.login_password).percent === 60 ? '🟡' : '🟢'} {getPasswordStrengthInfo(teacherForm.login_password).text}
+                                  </p>
+                                </div>
                               )}
                             </div>
                           </div>
