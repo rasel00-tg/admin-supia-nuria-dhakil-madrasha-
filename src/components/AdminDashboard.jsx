@@ -182,6 +182,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
   const [teacherUploadingMsg, setTeacherUploadingMsg] = useState('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।');
   const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
   const [loginType, setLoginType] = useState('email');
+  const [customError, setCustomError] = useState(null);
 
   // 3. User Form (Settings)
   const [userForm, setUserForm] = useState({
@@ -624,6 +625,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     });
     setEditingTeacherId(null);
     setLoginType('email');
+    setCustomError(null);
   };
 
   // Handle Teacher Submit (Add or Edit)
@@ -637,19 +639,19 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     // Dynamic Login ID Validation (Email / Phone Detection)
     const loginUsername = teacherForm.login_username.trim();
     if (!loginUsername) {
-      alert("❌ লগইন আইডি (মোবাইল নম্বর বা ইমেইল) পূরণ করা আবশ্যক।");
+      setCustomError("❌ লগইন আইডি (মোবাইল নম্বর বা ইমেইল) পূরণ করা আবশ্যক।");
       return;
     }
 
     if (loginType === 'mobile') {
       const isAllDigits = /^\d+$/.test(loginUsername);
       if (!isAllDigits || !loginUsername.startsWith('01') || loginUsername.length !== 11) {
-        alert("❌ ভুল লগইন আইডি ফরম্যাট!\nমোবাইল নম্বরটি অবশ্যই '01' দিয়ে শুরু এবং ১১ ডিজিটের হতে হবে।");
+        setCustomError("❌ ভুল লগইন আইডি ফরম্যাট!\nমোবাইল নম্বরটি অবশ্যই '01' দিয়ে শুরু এবং ১১ ডিজিটের হতে হবে।");
         return;
       }
     } else {
       if (!loginUsername.includes('@') || !loginUsername.endsWith('.com')) {
-        alert("❌ ভুল লগইন আইডি ফরম্যাট!\nইমেইল অ্যাড্রেসের শেষে কঠোরভাবে '.com' এবং মাঝে '@' যুক্ত থাকতে হবে।");
+        setCustomError("⚠️ দুঃখিত! আপনার প্রদানকৃত ইমেইল অ্যাড্রেসটির ফরম্যাট সঠিক নয়। দয়া করে শেষে `.com` যুক্ত একটি বৈধ ইমেইল দিন।");
         return;
       }
     }
@@ -717,8 +719,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
         const roleText = duplicateRole === "শিক্ষক" ? "শিক্ষক" : "শিক্ষার্থী";
         const alertMsg = `❌ এই মোবাইল নম্বরটি ইতিমধ্যে ব্যবহার করা হয়েছে! এটি বর্তমানে ${roleText} - ${personName}, আইডি: ${personId} এর প্রোফাইলে সচল রয়েছে।`;
         
-        alert(alertMsg);
-        triggerToast(alertMsg, 'error');
+        setCustomError(alertMsg);
         setIsTeacherUploading(false);
         return;
       }
@@ -833,20 +834,13 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       loadDatabaseData();
     } catch (err) {
       console.error("Error saving teacher:", err);
-      let errorMsg = 'শিক্ষকের তথ্য সংরক্ষণ বা অ্যাকাউন্ট তৈরি ব্যর্থ হয়েছে।';
+      let errorMsg = "⚠️ দুঃখিত! ডাটাবেস সংযোগে সমস্যা হয়েছে। দয়া করে সবকটি ঘর চেক করে আবার চেষ্টা করুন।";
       if (err.code === 'auth/email-already-in-use') {
-        errorMsg = '❌ এই ইমেইল/নম্বরটি ইতিমধ্যেই ব্যবহার করা হয়েছে। অন্য আইডি ব্যবহার করুন।';
-      } else if (err.code === 'auth/weak-password') {
-        errorMsg = '❌ দুর্বল পাসওয়ার্ড! পাসওয়ার্ডটি কমপক্ষে ৬ অক্ষরের হতে হবে।';
+        errorMsg = "❌ এই একাউন্ট নম্বর বা ইমেইলটি ইতিমধ্যে আরেকটি প্রোফাইলে ব্যবহার করা হয়েছে। দয়া করে নতুন বা অন্য কোনো আইডি ব্যবহার করুন।";
       } else if (err.code === 'auth/invalid-email') {
-        errorMsg = '❌ অবৈধ ইমেইল ফরম্যাট!';
-      } else if (err.code === 'auth/network-request-failed') {
-        errorMsg = '❌ নেটওয়ার্ক ত্রুটি! অনুগ্রহ করে আপনার ইন্টারনেট সংযোগ চেক করুন।';
-      } else {
-        errorMsg = `❌ ত্রুটি: ${err.message}`;
+        errorMsg = "⚠️ দুঃখিত! আপনার প্রদানকৃত ইমেইল অ্যাড্রেসটির ফরম্যাট সঠিক নয়। দয়া করে শেষে `.com` যুক্ত একটি বৈধ ইমেইল দিন।";
       }
-      alert(errorMsg);
-      triggerToast(errorMsg, 'error');
+      setCustomError(errorMsg);
     } finally {
       setIsTeacherUploading(false);
     }
@@ -4945,6 +4939,34 @@ function OnlineAdmissionsTab({ isDarkMode, triggerToast }) {
               )}
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Premium Custom Error Modal */}
+      {customError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in text-left">
+          <div className={`relative max-w-md w-full border-2 rounded-3xl p-6 shadow-2xl transition-all transform scale-100 ${
+            isDarkMode ? 'bg-[#120407] border-rose-950 text-rose-100' : 'bg-rose-50 border-rose-350 text-rose-950'
+          }`}>
+            <div className="flex items-start gap-4">
+              <span className="text-3xl shrink-0">⚠️</span>
+              <div className="space-y-3">
+                <h4 className="text-base font-black text-rose-500">ভুল পরিলক্ষিত হয়েছে!</h4>
+                <p className="text-xs sm:text-sm font-semibold leading-relaxed text-justify">
+                  {customError}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end pt-4 mt-4 border-t border-rose-900/30">
+              <button
+                type="button"
+                onClick={() => setCustomError(null)}
+                className="px-5 py-2 bg-rose-700 hover:bg-rose-800 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
+              >
+                ঠিক আছে
+              </button>
+            </div>
           </div>
         </div>
       )}
