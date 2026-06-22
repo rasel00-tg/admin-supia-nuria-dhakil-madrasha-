@@ -589,6 +589,71 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     setTeacherUploadingMsg('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।');
 
     try {
+      // 1. Mobile number duplicate check
+      const mobileVal = teacherForm.mobile.trim();
+      
+      const qTeacher1 = query(collection(db, "teachers"), where("mobile", "==", mobileVal));
+      const qTeacher2 = query(collection(db, "teachers"), where("phone", "==", mobileVal));
+      
+      const qStudent1 = query(collection(db, "students"), where("mobile", "==", mobileVal));
+      const qStudent2 = query(collection(db, "students"), where("phone", "==", mobileVal));
+      const qStudent3 = query(collection(db, "students"), where("applicant_phone", "==", mobileVal));
+      
+      const qAdmission1 = query(collection(db, "admissions"), where("applicant_phone", "==", mobileVal));
+      const qAdmission2 = query(collection(db, "admissions"), where("phone", "==", mobileVal));
+      const qAdmission3 = query(collection(db, "admissions"), where("mobile", "==", mobileVal));
+
+      const [resT1, resT2, resS1, resS2, resS3, resA1, resA2, resA3] = await Promise.all([
+        getDocs(qTeacher1), getDocs(qTeacher2),
+        getDocs(qStudent1), getDocs(qStudent2), getDocs(qStudent3),
+        getDocs(qAdmission1), getDocs(qAdmission2), getDocs(qAdmission3)
+      ]);
+
+      let duplicateFound = null;
+      let duplicateRole = ""; // "শিক্ষক" or "শিক্ষার্থী"
+
+      // Check teachers first
+      const teacherDocs = [...resT1.docs, ...resT2.docs];
+      for (const docSnapshot of teacherDocs) {
+        if (editingTeacherId && docSnapshot.id === editingTeacherId) {
+          continue;
+        }
+        duplicateFound = docSnapshot;
+        duplicateRole = "শিক্ষক";
+        break;
+      }
+
+      // Check students & admissions if no teacher duplicate found
+      if (!duplicateFound) {
+        const studentDocs = [...resS1.docs, ...resS2.docs, ...resS3.docs, ...resA1.docs, ...resA2.docs, ...resA3.docs];
+        if (studentDocs.length > 0) {
+          duplicateFound = studentDocs[0];
+          duplicateRole = "শিক্ষার্থী";
+        }
+      }
+
+      if (duplicateFound) {
+        const data = duplicateFound.data();
+        let personName = "নাম পাওয়া যায়নি";
+        let personId = "আইডি পাওয়া যায়নি";
+
+        if (duplicateRole === "শিক্ষক") {
+          personName = data.fullNameBangla || data.name || data.name_bn || "নাম পাওয়া যায়নি";
+          personId = data.teacherId || data.teacher_id || "আইডি পাওয়া যায়নি";
+        } else {
+          personName = data.name || data.student_name_bn || data.student_name_en || "নাম পাওয়া যায়নি";
+          personId = data.studentId || data.student_id || data.roll_no || data.roll || "আইডি পাওয়া যায়নি";
+        }
+
+        const roleText = duplicateRole === "শিক্ষক" ? "শিক্ষক" : "শিক্ষার্থী";
+        const alertMsg = `❌ এই মোবাইল নম্বরটি ইতিমধ্যে ব্যবহার করা হয়েছে! এটি বর্তমানে ${roleText} - ${personName}, আইডি: ${personId} এর প্রোফাইলে সচল রয়েছে।`;
+        
+        alert(alertMsg);
+        triggerToast(alertMsg, 'error');
+        setIsTeacherUploading(false);
+        return;
+      }
+
       if (editingTeacherId) {
         // Edit mode
         const docRef = doc(db, "teachers", editingTeacherId);
