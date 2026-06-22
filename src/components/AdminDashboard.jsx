@@ -39,6 +39,9 @@ import {
 } from '../supabaseClient';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import { db } from '../firebaseClient';
+import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+
+const auth = getAuth();
 
 export default function AdminDashboard({ adminUser, onLogout }) {
   const [activeTab, setActiveTab] = useState('home');
@@ -83,16 +86,54 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     gender: 'Male'
   });
 
-  // 2. Teacher Form
+  // 2. Teacher Form (39 Fields + Sub-tab & UI states)
   const [teacherForm, setTeacherForm] = useState({
-    name: '',
+    name_bn: '',
+    name_en: '',
+    father_name: '',
+    mother_name: '',
+    dob: '',
+    nid: '',
+    gender: 'পুরুষ',
+    marital_status: 'অবিবাহিত',
+    blood_group: 'O+',
+    photo_url: '',
+    nid_scan_url: '',
+    mobile: '',
+    alt_mobile: '',
+    whatsapp: '',
+    email: '',
+    present_address: '',
+    permanent_address: '',
+    highest_degree: '',
+    subject: '',
+    passing_year: '',
+    result: '',
+    teacher_id: '',
     designation: '',
     department: 'সাধারণ বিভাগ',
-    phone: '',
-    email: '',
-    joinDate: '',
-    avatarBg: 'bg-emerald-700'
+    joining_date: '',
+    status: 'সক্রিয়',
+    salary: '',
+    is_hafiz: false,
+    is_qari: false,
+    is_dawra: false,
+    special_skills: '',
+    bank_name: '',
+    bank_branch: '',
+    bank_account_no: '',
+    routing_no: '',
+    mobile_banking_type: 'bkash',
+    mobile_banking_no: '',
+    login_username: '',
+    login_password: ''
   });
+
+  const [activeTeacherSubTab, setActiveTeacherSubTab] = useState('list');
+  const [editingTeacherId, setEditingTeacherId] = useState(null);
+  const [isTeacherUploading, setIsTeacherUploading] = useState(false);
+  const [teacherUploadingMsg, setTeacherUploadingMsg] = useState('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।');
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
 
   // 3. User Form (Settings)
   const [userForm, setUserForm] = useState({
@@ -184,13 +225,29 @@ export default function AdminDashboard({ adminUser, onLogout }) {
 
     // Load Teachers
     try {
-      const teac = await getTeachers();
-      if (teac) {
+      const querySnapshot = await getDocs(collection(db, "teachers"));
+      if (!querySnapshot.empty) {
+        const teac = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setTeachersList(teac);
         tCount = teac.length;
+      } else {
+        const teac = await getTeachers();
+        if (teac) {
+          setTeachersList(teac);
+          tCount = teac.length;
+        }
       }
     } catch (err) {
-      console.error("Error loading teachers:", err);
+      console.error("Error loading teachers from Firestore, falling back to Supabase:", err);
+      try {
+        const teac = await getTeachers();
+        if (teac) {
+          setTeachersList(teac);
+          tCount = teac.length;
+        }
+      } catch (innerErr) {
+        console.error("Supabase fallback error:", innerErr);
+      }
     }
 
     // Load Messages
@@ -337,10 +394,23 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       }
     );
 
+    const unsubTeachers = onSnapshot(
+      collection(db, "teachers"),
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setTeachersList(data);
+        setStats(prev => ({ ...prev, teachers: data.length }));
+      },
+      (error) => {
+        console.error("Firestore teachers subscription error:", error);
+      }
+    );
+
     return () => {
       unsubAchievements();
       unsubMemoriam();
       unsubCommittee();
+      unsubTeachers();
     };
   }, []);
 
@@ -384,40 +454,316 @@ export default function AdminDashboard({ adminUser, onLogout }) {
     }
   };
 
-  // Handle Teacher Addition
+  // Generate Unique Teacher ID: SN-TEA-2026-XX
+  const generateUniqueTeacherId = async () => {
+    try {
+      const q = query(collection(db, "teachers"));
+      const querySnapshot = await getDocs(q);
+      let maxNum = 0;
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.teacher_id && data.teacher_id.startsWith('SN-TEA-2026-')) {
+          const parts = data.teacher_id.split('-');
+          const numPart = parseInt(parts[parts.length - 1], 10);
+          if (!isNaN(numPart) && numPart > maxNum) {
+            maxNum = numPart;
+          }
+        }
+      });
+      const nextNum = maxNum + 1;
+      return `SN-TEA-2026-${nextNum.toString().padStart(2, '0')}`;
+    } catch (err) {
+      console.error("Error generating teacher ID:", err);
+      const randomSuffix = Math.floor(10 + Math.random() * 90);
+      return `SN-TEA-2026-${randomSuffix}`;
+    }
+  };
+
+  // Upload File to ImgBB
+  const uploadFileToImgBB = async (file) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    const response = await fetch('https://api.imgbb.com/1/upload?key=96be92cf24f1281697cde3f7ad9d506e', {
+      method: 'POST',
+      body: formData
+    });
+    const resData = await response.json();
+    if (resData.success) {
+      return resData.data.url;
+    } else {
+      throw new Error(resData.error?.message || 'Upload failed');
+    }
+  };
+
+  // Handle Teacher Photo Change
+  const handleTeacherPhotoChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setIsTeacherUploading(true);
+    setTeacherUploadingMsg('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।');
+    try {
+      const url = await uploadFileToImgBB(file);
+      setTeacherForm(prev => ({ ...prev, photo_url: url }));
+      triggerToast('শিক্ষকের ছবি সফলভাবে আপলোড হয়েছে!');
+    } catch (err) {
+      console.error("Error uploading photo:", err);
+      triggerToast('ছবি আপলোড ব্যর্থ হয়েছে: ' + err.message, 'error');
+    } finally {
+      setIsTeacherUploading(false);
+    }
+  };
+
+  // Handle Teacher NID Copy Change
+  const handleTeacherNidChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setIsTeacherUploading(true);
+    setTeacherUploadingMsg('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।');
+    try {
+      const url = await uploadFileToImgBB(file);
+      setTeacherForm(prev => ({ ...prev, nid_scan_url: url }));
+      triggerToast('এনআইডি স্ক্যান কপি সফলভাবে আপলোড হয়েছে!');
+    } catch (err) {
+      console.error("Error uploading NID scan:", err);
+      triggerToast('এনআইডি স্ক্যান কপি আপলোড ব্যর্থ হয়েছে: ' + err.message, 'error');
+    } finally {
+      setIsTeacherUploading(false);
+    }
+  };
+
+  // Reset Teacher Form
+  const resetTeacherForm = () => {
+    setTeacherForm({
+      name_bn: '',
+      name_en: '',
+      father_name: '',
+      mother_name: '',
+      dob: '',
+      nid: '',
+      gender: 'পুরুষ',
+      marital_status: 'অবিবাহিত',
+      blood_group: 'O+',
+      photo_url: '',
+      nid_scan_url: '',
+      mobile: '',
+      alt_mobile: '',
+      whatsapp: '',
+      email: '',
+      present_address: '',
+      permanent_address: '',
+      highest_degree: '',
+      subject: '',
+      passing_year: '',
+      result: '',
+      teacher_id: '',
+      designation: '',
+      department: 'সাধারণ বিভাগ',
+      joining_date: '',
+      status: 'সক্রিয়',
+      salary: '',
+      is_hafiz: false,
+      is_qari: false,
+      is_dawra: false,
+      special_skills: '',
+      bank_name: '',
+      bank_branch: '',
+      bank_account_no: '',
+      routing_no: '',
+      mobile_banking_type: 'bkash',
+      mobile_banking_no: '',
+      login_username: '',
+      login_password: ''
+    });
+    setEditingTeacherId(null);
+  };
+
+  // Handle Teacher Submit (Add or Edit)
   const handleTeacherSubmit = async (e) => {
     e.preventDefault();
-    if (!teacherForm.name.trim() || !teacherForm.designation.trim() || !teacherForm.phone.trim()) {
-      triggerToast('সকল প্রয়োজনীয় ঘর পূরণ করুন।', 'error');
+    if (!teacherForm.name_bn.trim() || !teacherForm.designation.trim() || !teacherForm.mobile.trim()) {
+      triggerToast('শিক্ষকের নাম (বাংলা), পদবী এবং মোবাইল নম্বর পূরণ করা আবশ্যক।', 'error');
       return;
     }
 
-    try {
-      const bndate = new Date().toLocaleDateString('bn-BD', { year: 'numeric', month: 'long', day: 'numeric' });
-      await addTeacher({
-        name: teacherForm.name.trim(),
-        designation: teacherForm.designation.trim(),
-        department: teacherForm.department,
-        phone: teacherForm.phone.trim(),
-        email: teacherForm.email.trim() || null,
-        joinDate: teacherForm.joinDate || bndate,
-        avatarBg: teacherForm.avatarBg
-      });
+    setIsTeacherUploading(true);
+    setTeacherUploadingMsg('📖 অপেক্ষার প্রতিদান উত্তম,একটু ধৈর্য ধরুন।');
 
-      triggerToast('নতুন শিক্ষক পরিচিতি সফলভাবে নিবন্ধিত হয়েছে!');
-      setTeacherForm({
-        name: '',
-        designation: '',
-        department: 'সাধারণ বিভাগ',
-        phone: '',
-        email: '',
-        joinDate: '',
-        avatarBg: 'bg-emerald-700'
-      });
+    try {
+      if (editingTeacherId) {
+        // Edit mode
+        const docRef = doc(db, "teachers", editingTeacherId);
+        await updateDoc(docRef, {
+          name_bn: teacherForm.name_bn.trim(),
+          name_en: teacherForm.name_en.trim(),
+          father_name: teacherForm.father_name.trim(),
+          mother_name: teacherForm.mother_name.trim(),
+          dob: teacherForm.dob,
+          nid: teacherForm.nid.trim(),
+          gender: teacherForm.gender,
+          marital_status: teacherForm.marital_status,
+          blood_group: teacherForm.blood_group,
+          photo_url: teacherForm.photo_url,
+          nid_scan_url: teacherForm.nid_scan_url,
+          mobile: teacherForm.mobile.trim(),
+          alt_mobile: teacherForm.alt_mobile.trim(),
+          whatsapp: teacherForm.whatsapp.trim(),
+          email: teacherForm.email.trim(),
+          present_address: teacherForm.present_address.trim(),
+          permanent_address: teacherForm.permanent_address.trim(),
+          highest_degree: teacherForm.highest_degree.trim(),
+          subject: teacherForm.subject.trim(),
+          passing_year: teacherForm.passing_year.trim(),
+          result: teacherForm.result.trim(),
+          teacher_id: teacherForm.teacher_id,
+          designation: teacherForm.designation.trim(),
+          department: teacherForm.department.trim(),
+          joining_date: teacherForm.joining_date,
+          status: teacherForm.status,
+          salary: teacherForm.salary,
+          is_hafiz: teacherForm.is_hafiz,
+          is_qari: teacherForm.is_qari,
+          is_dawra: teacherForm.is_dawra,
+          special_skills: teacherForm.special_skills.trim(),
+          bank_name: teacherForm.bank_name.trim(),
+          bank_branch: teacherForm.bank_branch.trim(),
+          bank_account_no: teacherForm.bank_account_no.trim(),
+          routing_no: teacherForm.routing_no.trim(),
+          mobile_banking_type: teacherForm.mobile_banking_type,
+          mobile_banking_no: teacherForm.mobile_banking_no.trim(),
+          login_username: teacherForm.login_username.trim() || teacherForm.teacher_id,
+          login_password: teacherForm.login_password.trim(),
+          updated_at: new Date()
+        });
+        triggerToast('শিক্ষকের তথ্য সফলভাবে আপডেট হয়েছে!');
+      } else {
+        // Add mode
+        const newId = await generateUniqueTeacherId();
+        const teacherId = teacherForm.login_username.trim() || newId;
+        const authEmail = `${teacherId.toLowerCase()}@madrasah.com`;
+        const password = teacherForm.login_password.trim() || '123456';
+
+        // 1. Create account in Firebase Authentication
+        const userCredential = await createUserWithEmailAndPassword(auth, authEmail, password);
+        const authUid = userCredential.user.uid;
+
+        // 2. Save teacher profile in Firestore
+        await addDoc(collection(db, "teachers"), {
+          name_bn: teacherForm.name_bn.trim(),
+          name_en: teacherForm.name_en.trim(),
+          father_name: teacherForm.father_name.trim(),
+          mother_name: teacherForm.mother_name.trim(),
+          dob: teacherForm.dob,
+          nid: teacherForm.nid.trim(),
+          gender: teacherForm.gender,
+          marital_status: teacherForm.marital_status,
+          blood_group: teacherForm.blood_group,
+          photo_url: teacherForm.photo_url,
+          nid_scan_url: teacherForm.nid_scan_url,
+          mobile: teacherForm.mobile.trim(),
+          alt_mobile: teacherForm.alt_mobile.trim(),
+          whatsapp: teacherForm.whatsapp.trim(),
+          email: teacherForm.email.trim(),
+          present_address: teacherForm.present_address.trim(),
+          permanent_address: teacherForm.permanent_address.trim(),
+          highest_degree: teacherForm.highest_degree.trim(),
+          subject: teacherForm.subject.trim(),
+          passing_year: teacherForm.passing_year.trim(),
+          result: teacherForm.result.trim(),
+          teacher_id: teacherId,
+          teacherId: teacherId,
+          designation: teacherForm.designation.trim(),
+          department: teacherForm.department.trim(),
+          joining_date: teacherForm.joining_date,
+          status: teacherForm.status,
+          salary: teacherForm.salary,
+          is_hafiz: teacherForm.is_hafiz,
+          is_qari: teacherForm.is_qari,
+          is_dawra: teacherForm.is_dawra,
+          special_skills: teacherForm.special_skills.trim(),
+          bank_name: teacherForm.bank_name.trim(),
+          bank_branch: teacherForm.bank_branch.trim(),
+          bank_account_no: teacherForm.bank_account_no.trim(),
+          routing_no: teacherForm.routing_no.trim(),
+          mobile_banking_type: teacherForm.mobile_banking_type,
+          mobile_banking_no: teacherForm.mobile_banking_no.trim(),
+          login_username: teacherId.toLowerCase(),
+          login_password: password,
+          uid: authUid,
+          authEmail: authEmail,
+          created_at: new Date()
+        });
+        triggerToast('নতুন শিক্ষক পরিচিতি ও অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে!');
+      }
+      resetTeacherForm();
+      setActiveTeacherSubTab('list');
       loadDatabaseData();
     } catch (err) {
-      console.error("Error adding teacher:", err);
-      triggerToast('শিক্ষক পরিচিতি যোগ করতে সমস্যা হয়েছে: ' + err.message, 'error');
+      console.error("Error saving teacher:", err);
+      triggerToast('শিক্ষকের তথ্য সংরক্ষণ বা অ্যাকাউন্ট তৈরি ব্যর্থ হয়েছে: ' + err.message, 'error');
+    } finally {
+      setIsTeacherUploading(false);
+    }
+  };
+
+  // Handle Edit Teacher Click
+  const handleEditTeacher = (tea) => {
+    setTeacherForm({
+      name_bn: tea.name_bn || tea.name || '',
+      name_en: tea.name_en || '',
+      father_name: tea.father_name || '',
+      mother_name: tea.mother_name || '',
+      dob: tea.dob || '',
+      nid: tea.nid || '',
+      gender: tea.gender || 'পুরুষ',
+      marital_status: tea.marital_status || 'অবিবাহিত',
+      blood_group: tea.blood_group || 'O+',
+      photo_url: tea.photo_url || '',
+      nid_scan_url: tea.nid_scan_url || '',
+      mobile: tea.mobile || tea.phone || '',
+      alt_mobile: tea.alt_mobile || '',
+      whatsapp: tea.whatsapp || '',
+      email: tea.email || '',
+      present_address: tea.present_address || '',
+      permanent_address: tea.permanent_address || '',
+      highest_degree: tea.highest_degree || '',
+      subject: tea.subject || '',
+      passing_year: tea.passing_year || '',
+      result: tea.result || '',
+      teacher_id: tea.teacher_id || '',
+      designation: tea.designation || '',
+      department: tea.department || 'সাধারণ বিভাগ',
+      joining_date: tea.joining_date || tea.joinDate || '',
+      status: tea.status || 'সক্রিয়',
+      salary: tea.salary || '',
+      is_hafiz: tea.is_hafiz === true || tea.is_hafiz === 'true',
+      is_qari: tea.is_qari === true || tea.is_qari === 'true',
+      is_dawra: tea.is_dawra === true || tea.is_dawra === 'true',
+      special_skills: tea.special_skills || '',
+      bank_name: tea.bank_name || '',
+      bank_branch: tea.bank_branch || '',
+      bank_account_no: tea.bank_account_no || '',
+      routing_no: tea.routing_no || '',
+      mobile_banking_type: tea.mobile_banking_type || 'bkash',
+      mobile_banking_no: tea.mobile_banking_no || '',
+      login_username: tea.login_username || '',
+      login_password: tea.login_password || ''
+    });
+    setEditingTeacherId(tea.id);
+    setActiveTeacherSubTab('add');
+  };
+
+  // Handle Delete Teacher Click
+  const handleDeleteTeacher = async (id, name) => {
+    if (!window.confirm(`আপনি কি নিশ্চিতভাবে "${name}" শিক্ষকের প্রোফাইলটি ডিলিট করতে চান?`)) {
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "teachers", id));
+      triggerToast('শিক্ষকের প্রোফাইল সফলভাবে ডিলিট হয়েছে!');
+      loadDatabaseData();
+    } catch (err) {
+      console.error("Error deleting teacher:", err);
+      triggerToast('শিক্ষকের প্রোফাইল ডিলিট করতে সমস্যা হয়েছে: ' + err.message, 'error');
     }
   };
 
@@ -1481,165 +1827,919 @@ export default function AdminDashboard({ adminUser, onLogout }) {
 
               {/* Tab 3: Teachers Management */}
               {activeTab === 'teachers' && (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start animate-fade-in">
-                  
-                  {/* Teacher Add Form */}
-                  <div className={`border rounded-3xl p-6 shadow-xl ${
-                    isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200 text-slate-900'
-                  }`}>
-                    <h3 className="text-base font-bold text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center gap-2">
-                      <Plus className="h-5 w-5 shrink-0" />
-                      <span>শিক্ষক পরিচিতি যোগ করুন</span>
-                    </h3>
-
-                    <form onSubmit={handleTeacherSubmit} className="space-y-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-emerald-450 mb-1">শিক্ষকের নাম *</label>
-                        <input
-                          type="text"
-                          required
-                          value={teacherForm.name}
-                          onChange={(e) => setTeacherForm({ ...teacherForm, name: e.target.value })}
-                          className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                            isDarkMode 
-                              ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' 
-                              : 'bg-slate-50 border-gray-350 text-slate-950'
-                          }`}
-                          placeholder="মাওলানা আব্দুর রহমান"
-                        />
+                <div className="space-y-6 animate-fade-in relative">
+                  {/* Image Upload Loading Overlay */}
+                  {isTeacherUploading && (
+                    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/65 backdrop-blur-md">
+                      <div className="bg-[#031d12]/90 border border-emerald-500/30 p-8 rounded-3xl text-center shadow-2xl max-w-md mx-4 animate-pulse">
+                        <Loader2 className="h-12 w-12 text-amber-400 animate-spin mx-auto mb-4" />
+                        <h4 className="text-lg font-black text-amber-400 mb-2">ফাইল আপলোড হচ্ছে</h4>
+                        <p className="text-emerald-100/90 text-sm font-semibold">{teacherUploadingMsg}</p>
                       </div>
+                    </div>
+                  )}
 
-                      <div>
-                        <label className="block text-xs font-semibold text-emerald-450 mb-1">পদবী *</label>
-                        <input
-                          type="text"
-                          required
-                          value={teacherForm.designation}
-                          onChange={(e) => setTeacherForm({ ...teacherForm, designation: e.target.value })}
-                          className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                            isDarkMode 
-                              ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' 
-                              : 'bg-slate-50 border-gray-350 text-slate-955'
-                          }`}
-                          placeholder="উদা: সহকারী শিক্ষক / মুহতামিম"
-                        />
-                      </div>
+                  {/* Header & Sub-tab Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-emerald-950/20 pb-4">
+                    <div>
+                      <h2 className="text-xl sm:text-2xl font-black text-amber-400 flex items-center gap-2">
+                        <Users className="h-6 w-6 text-emerald-400" />
+                        <span>শিক্ষক ম্যানেজমেন্ট পোর্টাল</span>
+                      </h2>
+                      <p className={`text-xs ${isDarkMode ? 'text-emerald-300/70' : 'text-slate-500'} font-semibold mt-1`}>
+                        মাদ্রাসার সম্মানিত শিক্ষকদের তথ্য নিবন্ধন ও হালনাগাদ করার ডেডিকেটেড সেল।
+                      </p>
+                    </div>
 
-                      <div>
-                        <label className="block text-xs font-semibold text-emerald-455 mb-1">বিভাগ</label>
-                        <input
-                          type="text"
-                          value={teacherForm.department}
-                          onChange={(e) => setTeacherForm({ ...teacherForm, department: e.target.value })}
-                          className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                            isDarkMode 
-                              ? 'bg-[#02100a] border-emerald-800/60 text-white' 
-                              : 'bg-slate-50 border-gray-350'
-                          }`}
-                          placeholder="উদা: শরিয়াহ ও আরবি সাহিত্য"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-emerald-455 mb-1">মোবাইল নম্বর *</label>
-                        <input
-                          type="text"
-                          required
-                          value={teacherForm.phone}
-                          onChange={(e) => setTeacherForm({ ...teacherForm, phone: e.target.value })}
-                          className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                            isDarkMode 
-                              ? 'bg-[#02100a] border-emerald-800/60 text-white' 
-                              : 'bg-slate-50 border-gray-350 font-sans'
-                          }`}
-                          placeholder="০১৭০০-০০০০০০"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-emerald-455 mb-1">ইমেইল</label>
-                        <input
-                          type="email"
-                          value={teacherForm.email}
-                          onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })}
-                          className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                            isDarkMode 
-                              ? 'bg-[#02100a] border-emerald-800/60 text-white' 
-                              : 'bg-slate-50 border-gray-355 font-sans'
-                          }`}
-                          placeholder="teacher@madrasah.edu"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-emerald-455 mb-1">যোগদানের তারিখ</label>
-                        <input
-                          type="text"
-                          value={teacherForm.joinDate}
-                          onChange={(e) => setTeacherForm({ ...teacherForm, joinDate: e.target.value })}
-                          className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                            isDarkMode 
-                              ? 'bg-[#02100a] border-emerald-800/60 text-white' 
-                              : 'bg-slate-50 border-gray-350'
-                          }`}
-                          placeholder="উদা: ১২ মার্চ, ২০১৫"
-                        />
-                      </div>
-
+                    <div className="flex bg-[#02100a] p-1 rounded-2xl border border-emerald-900/35">
                       <button
-                        type="submit"
-                        className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all shadow-md mt-5 flex items-center justify-center gap-1.5 cursor-pointer"
+                        type="button"
+                        onClick={() => {
+                          setActiveTeacherSubTab('list');
+                          resetTeacherForm();
+                        }}
+                        className={`px-4 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer ${
+                          activeTeacherSubTab === 'list'
+                            ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                            : 'text-emerald-400 hover:text-white'
+                        }`}
                       >
-                        <Plus className="h-4.5 w-4.5" />
-                        <span>শিক্ষক পরিচিতি যোগ করুন</span>
+                        📋 শিক্ষক তালিকা
                       </button>
-                    </form>
-                  </div>
-
-                  {/* Teachers Table view */}
-                  <div className={`border rounded-3xl p-6 shadow-xl lg:col-span-2 overflow-hidden flex flex-col justify-start ${
-                    isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200'
-                  }`}>
-                    <h3 className="text-base font-bold text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center justify-between">
-                      <span>শিক্ষক পরিচিতি তালিকা</span>
-                    </h3>
-
-                    <div className="overflow-x-auto scrollbar-none">
-                      <table className="w-full text-left border-collapse text-xs sm:text-sm">
-                        <thead>
-                          <tr className={`border-b text-amber-450 font-bold ${
-                            isDarkMode ? 'bg-[#02100a]/80 border-emerald-900' : 'bg-slate-50 border-gray-250 text-emerald-850'
-                          }`}>
-                            <th className="py-3 px-3.5">নাম</th>
-                            <th className="py-3 px-3.5">পদবী</th>
-                            <th className="py-3 px-3.5">বিভাগ</th>
-                            <th className="py-3 px-3.5">মোবাইল</th>
-                            <th className="py-3 px-3.5">যোগদান</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-emerald-900/20">
-                          {teachersList.length > 0 ? (
-                            teachersList.map((tea, idx) => (
-                              <tr key={idx} className={`font-semibold font-sans transition-colors ${
-                                isDarkMode ? 'hover:bg-white/5 text-emerald-100' : 'hover:bg-slate-50 text-slate-800'
-                              }`}>
-                                <td className={`py-3 px-3.5 font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{tea.name}</td>
-                                <td className="py-3 px-3.5 text-amber-300 font-bold">{tea.designation}</td>
-                                <td className="py-3 px-3.5 text-emerald-405">{tea.department || 'সাধারণ বিভাগ'}</td>
-                                <td className="py-3 px-3.5">{tea.phone}</td>
-                                <td className="py-3 px-3.5">{tea.joinDate}</td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan="5" className="py-8 text-center text-gray-405 font-bold">কোনো শিক্ষক ডাটাবেসে নিবন্ধিত নেই।</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTeacherSubTab('add');
+                          if (!editingTeacherId) resetTeacherForm();
+                        }}
+                        className={`px-4 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer ${
+                          activeTeacherSubTab === 'add'
+                            ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                            : 'text-emerald-400 hover:text-white'
+                        }`}
+                      >
+                        {editingTeacherId ? '📝 শিক্ষক সংশোধন' : '➕ শিক্ষক যোগ'}
+                      </button>
                     </div>
                   </div>
 
+                  {/* Sub-tab 1: Teachers List */}
+                  {activeTeacherSubTab === 'list' && (
+                    <div className="space-y-6">
+                      {/* Search and Stats Cards */}
+                      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-center">
+                        <div className="lg:col-span-2 relative">
+                          <Search className="absolute left-3 top-3.5 h-4 w-4 text-emerald-500/70" />
+                          <input
+                            type="text"
+                            value={teacherSearchQuery}
+                            onChange={(e) => setTeacherSearchQuery(e.target.value)}
+                            placeholder="নাম, আইডি, পদবী বা বিভাগ দিয়ে খুঁজুন..."
+                            className={`w-full pl-10 pr-4 py-2.5 rounded-xl border text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 font-sans ${
+                              isDarkMode
+                                ? 'bg-[#02100a] border-emerald-800/60 text-white placeholder-emerald-700'
+                                : 'bg-white border-gray-300 text-slate-900'
+                            }`}
+                          />
+                          {teacherSearchQuery && (
+                            <button
+                              type="button"
+                              onClick={() => setTeacherSearchQuery('')}
+                              className="absolute right-3 top-2.5 text-xs text-amber-500 font-bold hover:text-amber-400 cursor-pointer"
+                            >
+                              মুছুন
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Quick Stats */}
+                        <div className={`p-3 rounded-2xl border flex items-center justify-between ${
+                          isDarkMode ? 'bg-[#02100a]/50 border-emerald-950/40 text-white' : 'bg-emerald-50 border-emerald-100 text-emerald-900'
+                        }`}>
+                          <span className="text-xs font-bold">মোট শিক্ষক</span>
+                          <span className="text-sm sm:text-base font-sans font-black text-amber-400 bg-[#031d12] px-2.5 py-0.5 rounded-lg border border-emerald-900/30">
+                            {teachersList.length} জন
+                          </span>
+                        </div>
+
+                        <div className={`p-3 rounded-2xl border flex items-center justify-between ${
+                          isDarkMode ? 'bg-[#02100a]/50 border-emerald-950/40 text-white' : 'bg-emerald-50 border-emerald-100 text-emerald-900'
+                        }`}>
+                          <span className="text-xs font-bold">সক্রিয় শিক্ষক</span>
+                          <span className="text-sm sm:text-base font-sans font-black text-emerald-400 bg-[#031d12] px-2.5 py-0.5 rounded-lg border border-emerald-900/30">
+                            {teachersList.filter(t => t.status === 'সক্রিয়' || !t.status).length} জন
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Teachers Card Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                        {teachersList.filter(tea => {
+                          const queryStr = teacherSearchQuery.toLowerCase();
+                          const nameBn = (tea.name_bn || tea.name || '').toLowerCase();
+                          const nameEn = (tea.name_en || '').toLowerCase();
+                          const tid = (tea.teacher_id || '').toLowerCase();
+                          const desig = (tea.designation || '').toLowerCase();
+                          const dept = (tea.department || '').toLowerCase();
+                          return nameBn.includes(queryStr) || nameEn.includes(queryStr) || tid.includes(queryStr) || desig.includes(queryStr) || dept.includes(queryStr);
+                        }).length > 0 ? (
+                          teachersList
+                            .filter(tea => {
+                              const queryStr = teacherSearchQuery.toLowerCase();
+                              const nameBn = (tea.name_bn || tea.name || '').toLowerCase();
+                              const nameEn = (tea.name_en || '').toLowerCase();
+                              const tid = (tea.teacher_id || '').toLowerCase();
+                              const desig = (tea.designation || '').toLowerCase();
+                              const dept = (tea.department || '').toLowerCase();
+                              return nameBn.includes(queryStr) || nameEn.includes(queryStr) || tid.includes(queryStr) || desig.includes(queryStr) || dept.includes(queryStr);
+                            })
+                            .map((tea, idx) => {
+                              const isHafiz = tea.is_hafiz === true || tea.is_hafiz === 'true';
+                              const isQari = tea.is_qari === true || tea.is_qari === 'true';
+                              const isDawra = tea.is_dawra === true || tea.is_dawra === 'true';
+                              
+                              return (
+                                <div
+                                  key={tea.id || idx}
+                                  className={`border rounded-3xl p-5 shadow-lg relative flex flex-col justify-between overflow-hidden group hover:scale-[1.01] hover:shadow-xl transition-all duration-300 ${
+                                    isDarkMode ? 'bg-[#031d12] border-emerald-900/40 text-emerald-100' : 'bg-white border-gray-200 text-slate-800'
+                                  }`}
+                                >
+                                  {/* Upper Badge Layer */}
+                                  <div className="flex items-center justify-between mb-4">
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                      tea.status === 'সক্রিয়' || !tea.status
+                                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25'
+                                        : 'bg-slate-500/10 text-slate-400 border border-slate-500/25'
+                                    }`}>
+                                      {tea.status || 'সক্রিয়'}
+                                    </span>
+                                    <span className="text-[10px] font-sans font-black text-amber-400 bg-amber-500/5 px-2 py-0.5 rounded-full border border-amber-500/15">
+                                      {tea.teacher_id || 'SN-TEA-XXXX'}
+                                    </span>
+                                  </div>
+
+                                  {/* Teacher Avatar & Info */}
+                                  <div className="flex items-start gap-4 mb-4">
+                                    {tea.photo_url ? (
+                                      <img
+                                        src={tea.photo_url}
+                                        alt={tea.name_bn || tea.name}
+                                        className="h-16 w-16 rounded-2xl object-cover border border-emerald-500/30 shadow-md bg-[#02100a]"
+                                      />
+                                    ) : (
+                                      <div className={`h-16 w-16 rounded-2xl flex items-center justify-center text-white font-black text-xl border border-emerald-500/20 shadow-md ${tea.avatarBg || 'bg-emerald-800'}`}>
+                                        {(tea.name_bn || tea.name || 'শ').substring(0, 1)}
+                                      </div>
+                                    )}
+
+                                    <div className="space-y-1">
+                                      <h4 className={`text-base font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                                        {tea.name_bn || tea.name}
+                                      </h4>
+                                      {tea.name_en && (
+                                        <p className="text-[11px] font-sans font-bold text-emerald-400 uppercase tracking-wide">
+                                          {tea.name_en}
+                                        </p>
+                                      )}
+                                      <p className="text-xs font-bold text-amber-400">
+                                        {tea.designation}
+                                      </p>
+                                      <p className={`text-[11px] font-semibold ${isDarkMode ? 'text-emerald-300/60' : 'text-slate-500'}`}>
+                                        {tea.department || 'সাধারণ বিভাগ'}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  {/* Details Section */}
+                                  <div className={`border-t border-emerald-950/10 pt-3 mt-1 space-y-2 text-[11px] sm:text-xs font-semibold ${isDarkMode ? 'text-emerald-200/80' : 'text-slate-600'}`}>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-emerald-500">📞</span>
+                                      <span className="font-sans">{tea.mobile || tea.phone || 'মোবাইল নম্বর নেই'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-emerald-500">📅</span>
+                                      <span>যোগদান: {tea.joining_date || tea.joinDate || 'যোগদান তারিখ নেই'}</span>
+                                    </div>
+
+                                    {/* Religious badges */}
+                                    {(isHafiz || isQari || isDawra) && (
+                                      <div className="flex flex-wrap gap-1.5 pt-2">
+                                        {isHafiz && (
+                                          <span className="bg-amber-400/10 text-amber-400 text-[9px] px-1.5 py-0.5 rounded border border-amber-400/20 font-bold">হাফেজ</span>
+                                        )}
+                                        {isQari && (
+                                          <span className="bg-amber-400/10 text-amber-400 text-[9px] px-1.5 py-0.5 rounded border border-amber-400/20 font-bold">ক্বারী</span>
+                                        )}
+                                        {isDawra && (
+                                          <span className="bg-amber-400/10 text-amber-400 text-[9px] px-1.5 py-0.5 rounded border border-amber-400/20 font-bold">দাওরায়ে হাদিস</span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Card Action Buttons */}
+                                  <div className="flex gap-2.5 mt-4 border-t border-emerald-950/10 pt-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEditTeacher(tea)}
+                                      className="flex-1 py-2 bg-emerald-700/20 hover:bg-emerald-700/35 border border-emerald-700/30 text-emerald-300 font-bold text-xs rounded-xl active:scale-95 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                                    >
+                                      <span>📝 এডিট করুন</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteTeacher(tea.id, tea.name_bn || tea.name)}
+                                      className="flex-1 py-2 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 text-red-400 font-bold text-xs rounded-xl active:scale-95 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                                    >
+                                      <span>🗑️ ডিলিট করুন</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })
+                        ) : (
+                          <div className={`col-span-full py-12 text-center border rounded-3xl border-dashed ${
+                            isDarkMode ? 'bg-[#02100a]/40 border-emerald-900/40 text-emerald-455' : 'bg-slate-50 border-gray-300 text-slate-500'
+                          }`}>
+                            <p className="font-bold text-sm sm:text-base">খোঁজা অনুযায়ী কোনো শিক্ষক প্রোফাইল খুঁজে পাওয়া যায়নি।</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sub-tab 2: Add / Edit Teacher Form */}
+                  {activeTeacherSubTab === 'add' && (
+                    <div className="space-y-6">
+                      
+                      {/* Guidance alert */}
+                      <div className={`p-4 rounded-2xl border text-xs sm:text-sm font-semibold leading-relaxed flex items-start gap-2 ${
+                        isDarkMode ? 'bg-amber-400/5 border-amber-400/20 text-amber-300/90' : 'bg-amber-50 border-amber-250 text-amber-900'
+                      }`}>
+                        <span className="text-base sm:text-lg shrink-0">⚠️</span>
+                        <div>
+                          <p className="font-black text-amber-400 mb-0.5">শিক্ষক ডাটাবেস এন্ট্রি গাইডলাইন</p>
+                          <p>তারকাচিহ্ন (*) যুক্ত সব ঘর নিখুঁতভাবে পূরণ করা বাধ্যতামূলক। ছবি ও এনআইডি ফাইল সিলেক্ট করার সাথে সাথেই ব্যাকগ্রাউন্ডে আপলোড সম্পন্ন হবে। অনুগ্রহ করে সম্পূর্ণ লোডিং সম্পন্ন হওয়া পর্যন্ত অপেক্ষা করুন।</p>
+                        </div>
+                      </div>
+
+                      <form onSubmit={handleTeacherSubmit} className="space-y-6">
+                        {/* 1. Personal Information */}
+                        <div className={`border rounded-3xl p-5 sm:p-6 shadow-xl ${
+                          isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200 text-slate-900'
+                        }`}>
+                          <h3 className="text-sm sm:text-base font-black text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center gap-2">
+                            <span className="text-emerald-400 text-lg">👤</span>
+                            <span>সেকশন ১: ব্যক্তিগত তথ্য (Personal Information) *</span>
+                          </h3>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">শিক্ষকের নাম (বাংলা) *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.name_bn}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, name_bn: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-950'
+                                }`}
+                                placeholder="এখানে শিক্ষকের নাম (বাংলা) লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">শিক্ষকের নাম (ইংরেজি) *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.name_en}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, name_en: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 font-sans ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-950'
+                                }`}
+                                placeholder="এখানে শিক্ষকের নাম (ইংরেজি) লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">পিতার নাম *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.father_name}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, father_name: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে পিতার নাম লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">মাতার নাম *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.mother_name}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, mother_name: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে মাতার নাম লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">জন্ম তারিখ *</label>
+                              <input
+                                type="date"
+                                required
+                                value={teacherForm.dob}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, dob: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">এনআইডি/জন্ম নিবন্ধন নম্বর *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.nid}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, nid: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে এনআইডি বা জন্ম নিবন্ধন নাম্বার লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">লিঙ্গ *</label>
+                              <select
+                                value={teacherForm.gender}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, gender: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white text-emerald-100 focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                              >
+                                <option value="পুরুষ">পুরুষ</option>
+                                <option value="মহিলা">মহিলা</option>
+                                <option value="অন্যান্য">অন্যান্য</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">বৈবাহিক অবস্থা</label>
+                              <select
+                                value={teacherForm.marital_status}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, marital_status: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white text-emerald-100 focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                              >
+                                <option value="অবিবাহিত">অবিবাহিত</option>
+                                <option value="বিবাহিত">বিবাহিত</option>
+                                <option value="অন্যান্য">অন্যান্য</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">রক্তের গ্রুপ</label>
+                              <select
+                                value={teacherForm.blood_group}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, blood_group: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white text-emerald-100 focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                              >
+                                <option value="A+">A+</option>
+                                <option value="A-">A-</option>
+                                <option value="B+">B+</option>
+                                <option value="B-">B-</option>
+                                <option value="AB+">AB+</option>
+                                <option value="AB-">AB-</option>
+                                <option value="O+">O+</option>
+                                <option value="O-">O-</option>
+                              </select>
+                            </div>
+
+                            {/* Photos inputs */}
+                            <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                              <div className="border border-dashed border-emerald-800/60 p-4 rounded-2xl flex items-center justify-between gap-4">
+                                <div className="flex-1">
+                                  <label className="block text-xs font-bold text-amber-400 mb-1">শিক্ষকের ছবি (Photo) *</label>
+                                  <p className="text-[10px] text-gray-400 font-semibold mb-2">জেপিজি বা পিএনজি ফাইল। সাইজ সর্বোচ্চ ২ এমবি।</p>
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleTeacherPhotoChange}
+                                    required={!editingTeacherId && !teacherForm.photo_url}
+                                    className="text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-900/35 file:text-emerald-300 hover:file:bg-emerald-900/50 file:cursor-pointer"
+                                  />
+                                </div>
+                                {teacherForm.photo_url && (
+                                  <img
+                                    src={teacherForm.photo_url}
+                                    alt="Preview"
+                                    className="h-14 w-14 rounded-xl object-cover border border-emerald-500/30 bg-[#02100a] shrink-0"
+                                  />
+                                )}
+                              </div>
+
+                              <div className="border border-dashed border-emerald-800/60 p-4 rounded-2xl flex items-center justify-between gap-4">
+                                <div className="flex-1">
+                                  <label className="block text-xs font-bold text-amber-400 mb-1">এনআইডি স্ক্যান কপি (NID Scan) *</label>
+                                  <p className="text-[10px] text-gray-400 font-semibold mb-2">এনআইডি কার্ডের স্পষ্ট রঙিন ছবি বা স্ক্যান কপি।</p>
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleTeacherNidChange}
+                                    required={!editingTeacherId && !teacherForm.nid_scan_url}
+                                    className="text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-900/35 file:text-emerald-300 hover:file:bg-emerald-900/50 file:cursor-pointer"
+                                  />
+                                </div>
+                                {teacherForm.nid_scan_url && (
+                                  <div className="h-14 w-14 rounded-xl border border-emerald-500/30 bg-[#02100a] flex flex-col items-center justify-center text-emerald-400 text-xs font-bold shrink-0">
+                                    <span>✔️</span>
+                                    <span className="text-[9px] mt-0.5">আপলোডড</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 2. Contact Information */}
+                        <div className={`border rounded-3xl p-5 sm:p-6 shadow-xl ${
+                          isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200 text-slate-900'
+                        }`}>
+                          <h3 className="text-sm sm:text-base font-black text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center gap-2">
+                            <span className="text-emerald-400 text-lg">📞</span>
+                            <span>সেকশন ২: যোগাযোগের তথ্য (Contact Information) *</span>
+                          </h3>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">মোবাইল নম্বর *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.mobile}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, mobile: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-950'
+                                }`}
+                                placeholder="এখানে ১১ ডিজিটের মোবাইল নাম্বার লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">বিকল্প মোবাইল নম্বর</label>
+                              <input
+                                type="text"
+                                value={teacherForm.alt_mobile}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, alt_mobile: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে বিকল্প মোবাইল নাম্বার লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">হোয়াটসঅ্যাপ নম্বর (WhatsApp)</label>
+                              <input
+                                type="text"
+                                value={teacherForm.whatsapp}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, whatsapp: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে হোয়াটসঅ্যাপ নাম্বার লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">ইমেইল ঠিকানা</label>
+                              <input
+                                type="email"
+                                value={teacherForm.email}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে ইমেইল এড্রেস দিন"
+                              />
+                            </div>
+
+                            <div className="md:col-span-2">
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">বর্তমান ঠিকানা *</label>
+                              <textarea
+                                required
+                                rows="2"
+                                value={teacherForm.present_address}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, present_address: e.target.value })}
+                                className={`w-full border rounded-xl py-2 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে বিস্তারিত বর্তমান ঠিকানা লিখুন"
+                              />
+                            </div>
+
+                            <div className="md:col-span-2">
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">স্থায়ী ঠিকানা *</label>
+                              <textarea
+                                required
+                                rows="2"
+                                value={teacherForm.permanent_address}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, permanent_address: e.target.value })}
+                                className={`w-full border rounded-xl py-2 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে বিস্তারিত স্থায়ী ঠিকানা লিখুন"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 3. Academic Credentials */}
+                        <div className={`border rounded-3xl p-5 sm:p-6 shadow-xl ${
+                          isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200 text-slate-900'
+                        }`}>
+                          <h3 className="text-sm sm:text-base font-black text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center gap-2">
+                            <span className="text-emerald-400 text-lg">🎓</span>
+                            <span>সেকশন ৩: শিক্ষাগত যোগ্যতা (Academic Credentials) *</span>
+                          </h3>
+
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 sm:gap-5">
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">সর্বোচ্চ ডিগ্রি *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.highest_degree}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, highest_degree: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে শিক্ষকের সর্বোচ্চ শিক্ষাগত ডিগ্রি লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">বিষয়/বিভাগ *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.subject}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, subject: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে ডিগ্রির বিষয় বা বিভাগ লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">পাসের সন *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.passing_year}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, passing_year: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে পাস করার সাল (সন) লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">ফলাফল (GPA/Division) *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.result}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, result: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে অর্জিত রেজাল্ট বা জিপিএ লিখুন"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 4. Job Details */}
+                        <div className={`border rounded-3xl p-5 sm:p-6 shadow-xl ${
+                          isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200 text-slate-900'
+                        }`}>
+                          <h3 className="text-sm sm:text-base font-black text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center gap-2">
+                            <span className="text-emerald-400 text-lg">💼</span>
+                            <span>সেকশন ৪: চাকরির তথ্য (Job Information) *</span>
+                          </h3>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">শিক্ষক আইডি (Teacher ID)</label>
+                              <input
+                                type="text"
+                                disabled
+                                value={editingTeacherId ? teacherForm.teacher_id : 'অটো-জেনারেটেড আইডি'}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none select-none opacity-70 cursor-not-allowed ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/30 text-amber-400/85' : 'bg-slate-100 border-gray-300 text-amber-600'
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">পদবী *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.designation}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, designation: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-950'
+                                }`}
+                                placeholder="এখানে শিক্ষকের পদবী লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-405 mb-1">বিভাগ (কর্মক্ষেত্র) *</label>
+                              <input
+                                type="text"
+                                required
+                                value={teacherForm.department}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, department: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে মাদ্রাসার কর্মক্ষেত্র বিভাগ লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-405 mb-1">যোগদানের তারিখ *</label>
+                              <input
+                                type="date"
+                                required
+                                value={teacherForm.joining_date}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, joining_date: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">অবস্থা (Status) *</label>
+                              <select
+                                value={teacherForm.status}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, status: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white text-emerald-100 focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                              >
+                                <option value="সক্রিয়">সক্রিয়</option>
+                                <option value="অবসরপ্রাপ্ত">অবসরপ্রাপ্ত</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">মাসিক বেতন / সম্মানী</label>
+                              <input
+                                type="number"
+                                value={teacherForm.salary}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, salary: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে মাসিক বেতন বা সম্মানীর পরিমাণ লিখুন"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 5. Religious optional qualifications */}
+                        <div className={`border rounded-3xl p-5 sm:p-6 shadow-xl ${
+                          isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200 text-slate-900'
+                        }`}>
+                          <h3 className="text-sm sm:text-base font-black text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center gap-2">
+                            <span className="text-emerald-400 text-lg">🕌</span>
+                            <span>সেকশন ৫: ধর্মীয় অতিরিক্ত যোগ্যতা (Religious Optional Qualifications)</span>
+                          </h3>
+
+                          <div className="space-y-4">
+                            <div className="flex flex-wrap gap-6 items-center">
+                              <label className="flex items-center gap-2 cursor-pointer text-xs sm:text-sm font-semibold select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={teacherForm.is_hafiz}
+                                  onChange={(e) => setTeacherForm({ ...teacherForm, is_hafiz: e.target.checked })}
+                                  className="h-4 w-4 rounded border-emerald-850 text-amber-500 focus:ring-amber-400 cursor-pointer"
+                                />
+                                <span>হাফেজ (Hifz)</span>
+                              </label>
+
+                              <label className="flex items-center gap-2 cursor-pointer text-xs sm:text-sm font-semibold select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={teacherForm.is_qari}
+                                  onChange={(e) => setTeacherForm({ ...teacherForm, is_qari: e.target.checked })}
+                                  className="h-4 w-4 rounded border-emerald-850 text-amber-500 focus:ring-amber-400 cursor-pointer"
+                                />
+                                <span>ক্বারী (Qira'at)</span>
+                              </label>
+
+                              <label className="flex items-center gap-2 cursor-pointer text-xs sm:text-sm font-semibold select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={teacherForm.is_dawra}
+                                  onChange={(e) => setTeacherForm({ ...teacherForm, is_dawra: e.target.checked })}
+                                  className="h-4 w-4 rounded border-emerald-850 text-amber-500 focus:ring-amber-400 cursor-pointer"
+                                />
+                                <span>দাওরায়ে হাদিস (Dawra-e-Hadith)</span>
+                              </label>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-455 mb-1">অন্যান্য বিশেষ যোগ্যতা / দক্ষতা</label>
+                              <input
+                                type="text"
+                                value={teacherForm.special_skills}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, special_skills: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="অন্য কোনো বিশেষ যোগ্যতা বা দক্ষতা থাকলে এখানে লিখুন"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 6. Bank & Financial Information */}
+                        <div className={`border rounded-3xl p-5 sm:p-6 shadow-xl ${
+                          isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200 text-slate-900'
+                        }`}>
+                          <h3 className="text-sm sm:text-base font-black text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center gap-2">
+                            <span className="text-emerald-400 text-lg">🏦</span>
+                            <span>সেকশন ৬: ব্যাংক ও আর্থিক তথ্য (Bank & Financial Information)</span>
+                          </h3>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">ব্যাংকের নাম</label>
+                              <input
+                                type="text"
+                                value={teacherForm.bank_name}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, bank_name: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে ব্যাংকের নাম লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">শাখার নাম</label>
+                              <input
+                                type="text"
+                                value={teacherForm.bank_branch}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, bank_branch: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে ব্যাংক শাখার নাম লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">ব্যাংক অ্যাকাউন্ট নম্বর</label>
+                              <input
+                                type="text"
+                                value={teacherForm.bank_account_no}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, bank_account_no: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে ব্যাংক অ্যাকাউন্ট নাম্বার লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">রাউটিং নম্বর</label>
+                              <input
+                                type="text"
+                                value={teacherForm.routing_no}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, routing_no: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে ব্যাংক রাউটিং নাম্বার লিখুন"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">মোবাইল ব্যাংকিং সেবাদাতা</label>
+                              <select
+                                value={teacherForm.mobile_banking_type}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, mobile_banking_type: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white text-emerald-100 focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                              >
+                                <option value="none">প্রযোজ্য নয়</option>
+                                <option value="bkash">বিকাশ (bKash)</option>
+                                <option value="nagad">নগদ (Nagad)</option>
+                                <option value="rocket">রকেট (Rocket)</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">মোবাইল ব্যাংকিং নম্বর</label>
+                              <input
+                                type="text"
+                                value={teacherForm.mobile_banking_no}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, mobile_banking_no: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে মোবাইল ব্যাংকিং অ্যাকাউন্ট নাম্বার লিখুন"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 7. Account Login Credentials */}
+                        <div className={`border rounded-3xl p-5 sm:p-6 shadow-xl ${
+                          isDarkMode ? 'bg-[#031d12] border-emerald-900/40' : 'bg-white border-gray-200 text-slate-900'
+                        }`}>
+                          <h3 className="text-sm sm:text-base font-black text-amber-400 border-b border-emerald-900/40 pb-3 mb-5 flex items-center gap-2">
+                            <span className="text-emerald-400 text-lg">🔑</span>
+                            <span>সেকশন ৭: অ্যাকাউন্ট লগইন তথ্য (Account Login Credentials)</span>
+                          </h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">লগইন ইউজারনেম (শিক্ষক আইডি)*</label>
+                              <input
+                                type="text"
+                                value={teacherForm.login_username}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, login_username: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="এখানে শিক্ষকের নির্দিষ্ট আইডি নম্বরটি লিখুন (যেমন: SN-TEA-101)"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">লগইন পাসওয়ার্ড (Login Password)</label>
+                              <input
+                                type="password"
+                                value={teacherForm.login_password}
+                                onChange={(e) => setTeacherForm({ ...teacherForm, login_password: e.target.value })}
+                                className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                  isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
+                                }`}
+                                placeholder="লগইন করার জন্য একটি স্ট্রং পাসওয়ার্ড সেট করুন"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Form action buttons */}
+                        <div className="flex flex-col sm:flex-row gap-3 pt-4">
+                          <button
+                            type="submit"
+                            className="flex-1 py-3.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm rounded-2xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <span>{editingTeacherId ? '🔄 তথ্য আপডেট করুন' : '➕ শিক্ষক নিবন্ধন সম্পন্ন করুন'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              resetTeacherForm();
+                              setActiveTeacherSubTab('list');
+                            }}
+                            className={`px-6 py-3.5 border rounded-2xl text-sm font-bold active:scale-95 transition-all cursor-pointer ${
+                              isDarkMode
+                                ? 'bg-transparent border-emerald-800 text-emerald-300 hover:bg-emerald-950/20'
+                                : 'bg-slate-50 border-gray-350 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            বাতিল করুন
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
                 </div>
               )}
 
