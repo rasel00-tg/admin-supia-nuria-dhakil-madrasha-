@@ -704,7 +704,7 @@ export default function AdminDashboard({ adminUser, onLogout }) {
         // Add mode
         const newId = await generateUniqueTeacherId();
         const teacherId = teacherForm.login_username.trim() || newId;
-        const authEmail = `${teacherId.toLowerCase()}@madrasah.com`;
+        const authEmail = teacherId.includes('@') ? teacherId.toLowerCase() : `${teacherId.toLowerCase()}@madrasah.com`;
         const password = teacherForm.login_password.trim() || '123456';
 
         // 1. Create account in Firebase Authentication
@@ -764,7 +764,20 @@ export default function AdminDashboard({ adminUser, onLogout }) {
       loadDatabaseData();
     } catch (err) {
       console.error("Error saving teacher:", err);
-      triggerToast('শিক্ষকের তথ্য সংরক্ষণ বা অ্যাকাউন্ট তৈরি ব্যর্থ হয়েছে: ' + err.message, 'error');
+      let errorMsg = 'শিক্ষকের তথ্য সংরক্ষণ বা অ্যাকাউন্ট তৈরি ব্যর্থ হয়েছে।';
+      if (err.code === 'auth/email-already-in-use') {
+        errorMsg = '❌ এই ইমেইল/নম্বরটি ইতিমধ্যেই ব্যবহার করা হয়েছে। অন্য আইডি ব্যবহার করুন।';
+      } else if (err.code === 'auth/weak-password') {
+        errorMsg = '❌ দুর্বল পাসওয়ার্ড! পাসওয়ার্ডটি কমপক্ষে ৬ অক্ষরের হতে হবে।';
+      } else if (err.code === 'auth/invalid-email') {
+        errorMsg = '❌ অবৈধ ইমেইল ফরম্যাট!';
+      } else if (err.code === 'auth/network-request-failed') {
+        errorMsg = '❌ নেটওয়ার্ক ত্রুটি! অনুগ্রহ করে আপনার ইন্টারনেট সংযোগ চেক করুন।';
+      } else {
+        errorMsg = `❌ ত্রুটি: ${err.message}`;
+      }
+      alert(errorMsg);
+      triggerToast(errorMsg, 'error');
     } finally {
       setIsTeacherUploading(false);
     }
@@ -2752,15 +2765,16 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                           </h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
                             <div>
-                              <label className="block text-xs font-semibold text-emerald-400 mb-1">লগইন ইউজারনেম (শিক্ষক আইডি)*</label>
+                              <label className="block text-xs font-semibold text-emerald-400 mb-1">লগইন অ্যাকাউন্ট নম্বর বা ইমেইল *</label>
                               <input
                                 type="text"
+                                required
                                 value={teacherForm.login_username}
                                 onChange={(e) => setTeacherForm({ ...teacherForm, login_username: e.target.value })}
                                 className={`w-full border rounded-xl py-2.5 px-3 text-xs sm:text-sm font-sans focus:outline-none focus:ring-1 focus:ring-amber-400 ${
                                   isDarkMode ? 'bg-[#02100a] border-emerald-800/60 text-white focus:border-amber-400' : 'bg-slate-50 border-gray-350 text-slate-955'
                                 }`}
-                                placeholder="এখানে শিক্ষকের নির্দিষ্ট আইডি নম্বরটি লিখুন (যেমন: SN-TEA-101)"
+                                placeholder="এখানে শিক্ষকের মোবাইল নম্বর বা ইমেইল লিখুন"
                               />
                             </div>
 
@@ -2775,6 +2789,15 @@ export default function AdminDashboard({ adminUser, onLogout }) {
                                 }`}
                                 placeholder="লগইন করার জন্য একটি স্ট্রং পাসওয়ার্ড সেট করুন"
                               />
+                              {teacherForm.login_password && (
+                                <p className={`text-xs font-bold mt-1.5 ${
+                                  getPasswordStrength(teacherForm.login_password).includes('🔴') ? 'text-rose-500' :
+                                  getPasswordStrength(teacherForm.login_password).includes('🟡') ? 'text-amber-500' :
+                                  'text-emerald-400'
+                                }`}>
+                                  {getPasswordStrength(teacherForm.login_password)}
+                                </p>
+                              )}
                             </div>
                           </div>
                         </div>
